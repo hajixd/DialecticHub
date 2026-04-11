@@ -10,7 +10,7 @@
     <meta name="msapplication-TileColor" content="#0b0e12" />
     <meta
       name="description"
-      content="Schedule debates, settle results, and track the ladder from one clean board."
+      content="Schedule debates, settle results, and track the rankings from one clean board."
     />
     <link rel="icon" href="assets/dialectic-mark.svg" type="image/svg+xml" />
     <link rel="icon" href="assets/favicon-16x16.png" sizes="16x16" type="image/png" />
@@ -195,7 +195,7 @@
             <a class="nav-btn is-active" data-page-link="dashboard" href="./">Profile</a>
             <a class="nav-btn" data-page-link="schedule" href="./?page=schedule">Schedule</a>
             <a class="nav-btn" data-page-link="archive" href="./?page=archive">Archive</a>
-            <a class="nav-btn" data-page-link="rankings" href="./?page=rankings">Ladder</a>
+            <a class="nav-btn" data-page-link="rankings" href="./?page=rankings">Rankings</a>
             <a class="nav-btn hidden" id="admin-nav-link" data-page-link="admin" href="./?page=admin">Admin</a>
           </nav>
         </aside>
@@ -210,18 +210,15 @@
     <div class="account-modal-shell hidden" id="account-modal-shell" aria-hidden="true">
       <section class="account-modal" id="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
         <div class="account-modal-head">
-          <span class="panel-label">Account</span>
           <button class="account-modal-close" id="account-modal-close-btn" type="button" aria-label="Close account dialog">
             &times;
           </button>
         </div>
         <h2 class="account-modal-title" id="account-modal-title">Account</h2>
-        <p class="account-modal-copy" id="account-modal-copy"></p>
         <form class="stack-form account-modal-form" id="account-modal-form" autocomplete="off">
           <div class="account-modal-fields" id="account-modal-fields"></div>
           <p class="form-hint" id="account-modal-hint"></p>
           <div class="form-actions account-modal-actions">
-            <button class="ghost-btn" id="account-modal-cancel-btn" type="button">Cancel</button>
             <button class="primary-btn" id="account-modal-submit-btn" type="submit">Save</button>
           </div>
         </form>

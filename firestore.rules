@@ -15,33 +15,49 @@ service cloud.firestore {
 
     match /usernames/{username} {
       allow read: if true;
-      allow create: if signedIn()
-        && username.matches('^[a-z0-9_]{3,20}$')
-        && !exists(/databases/$(database)/documents/usernames/$(username))
+      allow create: if username.matches('^[a-z0-9_]{3,20}$')
         && (
-          (
-            request.resource.data.uid == request.auth.uid
-            && request.resource.data.authHandle is string
-            && request.resource.data.authHandle != ''
-          ) || (
-            request.resource.data.uid == ''
-            && request.resource.data.authHandle is string
-            && request.resource.data.authHandle == ''
-            && request.resource.data.invitedByUid == request.auth.uid
+          isAdmin() || (
+            signedIn()
+            && !exists(/databases/$(database)/documents/usernames/$(username))
+            && (
+              (
+                request.resource.data.uid == request.auth.uid
+                && request.resource.data.authHandle is string
+                && request.resource.data.authHandle != ''
+              ) || (
+                request.resource.data.uid == ''
+                && request.resource.data.authHandle is string
+                && request.resource.data.authHandle == ''
+                && request.resource.data.invitedByUid == request.auth.uid
+              )
+            )
           )
         );
-      allow update: if signedIn()
-        && username.matches('^[a-z0-9_]{3,20}$')
-        && resource.data.uid == ''
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.authHandle is string
-        && request.resource.data.authHandle != '';
+      allow update: if username.matches('^[a-z0-9_]{3,20}$')
+        && (
+          isAdmin() || (
+            signedIn()
+            && (
+              (
+                resource.data.uid == ''
+                && request.resource.data.uid == request.auth.uid
+                && request.resource.data.authHandle is string
+                && request.resource.data.authHandle != ''
+              ) || (
+                resource.data.uid == request.auth.uid
+                && request.resource.data.uid == resource.data.uid
+                && request.resource.data.authHandle == resource.data.authHandle
+              )
+            )
+          )
+        );
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == resource.data.uid);
     }
 
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
@@ -53,6 +69,12 @@ service cloud.firestore {
         && request.resource.data.debaterBUid is string
         && request.resource.data.debaterAUid != request.resource.data.debaterBUid
         && request.resource.data.topic is string
+        && request.resource.data.category is string
+        && (
+          request.resource.data.category == 'philosophy'
+          || request.resource.data.category == 'politics'
+          || request.resource.data.category == 'misc'
+        )
         && (
           (
             request.resource.data.status == 'scheduled'
