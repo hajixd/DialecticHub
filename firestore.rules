@@ -60,7 +60,9 @@ service cloud.firestore {
     }
 
     function validDebateTeamSize() {
-      return request.resource.data.teamSize == 1 || request.resource.data.teamSize == 2;
+      return request.resource.data.teamSize == 1
+        || request.resource.data.teamSize == 2
+        || request.resource.data.teamSize == 3;
     }
 
     function validDebateParticipants() {
@@ -77,6 +79,16 @@ service cloud.firestore {
               !request.resource.data.keys().hasAny(['debaterA2Uid'])
               || request.resource.data.debaterA2Uid == ''
             )
+            && (
+              !request.resource.data.keys().hasAny(['debaterB2Uid'])
+              || request.resource.data.debaterB2Uid == ''
+            )
+          ) || (
+            request.resource.data.teamSize == 3
+            && request.resource.data.debaterA2Uid is string
+            && request.resource.data.debaterA2Uid != ''
+            && request.resource.data.debaterAUid != request.resource.data.debaterA2Uid
+            && request.resource.data.debaterBUid != request.resource.data.debaterA2Uid
             && (
               !request.resource.data.keys().hasAny(['debaterB2Uid'])
               || request.resource.data.debaterB2Uid == ''

@@ -58,6 +58,7 @@
   ];
   const DEBATE_TEAM_OPTIONS = [
     { id: 1, label: "1v1" },
+    { id: 3, label: "2v1" },
     { id: 2, label: "2v2" }
   ];
   const DEBATE_PARTICIPANT_FIELD_META = [
@@ -672,6 +673,46 @@
     el.userAvatar.classList.toggle("has-image", avatar.hasImage);
     el.userAvatar.classList.toggle("is-initials", !avatar.hasImage);
     el.userAvatar.setAttribute("aria-label", `${formatDisplayName(state.username || "debater", "Debater")} avatar`);
+  }
+
+  function getYouTubeVideoId(rawUrl) {
+    const safeUrl = String(rawUrl || "").trim();
+    if (!safeUrl) return "";
+
+    try {
+      const url = new URL(safeUrl);
+      const host = url.hostname.replace(/^www\./, "").toLowerCase();
+
+      if (host === "youtu.be") {
+        const shortId = url.pathname.split("/").filter(Boolean)[0] || "";
+        return /^[A-Za-z0-9_-]{6,}$/.test(shortId) ? shortId : "";
+      }
+
+      if (host === "youtube.com" || host === "m.youtube.com") {
+        let videoId = "";
+
+        if (url.pathname === "/watch") {
+          videoId = url.searchParams.get("v") || "";
+        } else if (
+          url.pathname.startsWith("/embed/")
+          || url.pathname.startsWith("/shorts/")
+          || url.pathname.startsWith("/live/")
+        ) {
+          videoId = url.pathname.split("/").filter(Boolean)[1] || "";
+        }
+
+        return /^[A-Za-z0-9_-]{6,}$/.test(videoId) ? videoId : "";
+      }
+    } catch (_) {
+      return "";
+    }
+
+    return "";
+  }
+
+  function getYouTubeThumbnailUrl(rawUrl) {
+    const videoId = getYouTubeVideoId(rawUrl);
+    return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "";
   }
 
   function syncBodyModalState() {
@@ -1572,28 +1613,10 @@
   }
 
   function getYouTubeEmbedUrl(rawUrl, options = {}) {
-    const safeUrl = String(rawUrl || "").trim();
-    if (!safeUrl) return "";
+    const videoId = getYouTubeVideoId(rawUrl);
+    if (!videoId) return "";
 
     try {
-      const url = new URL(safeUrl);
-      const host = url.hostname.replace(/^www\./, "").toLowerCase();
-      let videoId = "";
-
-      if (host === "youtu.be") {
-        videoId = url.pathname.split("/").filter(Boolean)[0] || "";
-      } else if (host === "youtube.com" || host === "m.youtube.com") {
-        if (url.pathname === "/watch") {
-          videoId = url.searchParams.get("v") || "";
-        } else if (url.pathname.startsWith("/embed/") || url.pathname.startsWith("/shorts/")) {
-          videoId = url.pathname.split("/").filter(Boolean)[1] || "";
-        }
-      }
-
-      if (!/^[A-Za-z0-9_-]{6,}$/.test(videoId)) {
-        return "";
-      }
-
       const embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
       const startSeconds = parseVideoClipSeconds(options.startSeconds ?? options.start);
       const endSeconds = parseVideoClipSeconds(options.endSeconds ?? options.end);
@@ -1709,6 +1732,8 @@
           title: formatDisplayName(entry.name, "Debater"),
           meta: bestCategory ? `${bestCategory.label} - ${getRatingDisplayValue(bestCategory)}` : "User page",
           note: entry.uid === currentUid ? "Open your profile" : "Open profile page",
+          avatarDataUrl: getAvatarDataUrlForUid(entry.uid),
+          avatarSeed: entry.uid || entry.name,
           page: "dashboard",
           profileUid: entry.uid,
           term: ""
@@ -1743,6 +1768,8 @@
           key: `debate:${debate.id}`,
           kind: debate.status === "resolved" ? "Result" : "Upcoming",
           title: debate.topic || "Untitled debate",
+          categoryLabel: getDebateCategoryLabel(debate.category),
+          thumbnailUrl: getYouTubeThumbnailUrl(debate.videoUrl || debate.videoEmbedUrl || ""),
           meta: [getDebateCategoryLabel(debate.category), people].filter(Boolean).join(" • ") || "Debate",
           note: `${debate.status === "resolved" ? "Open archive" : "Open schedule board"} • ${formatShortDate(debate.scheduledFor)}`,
           debateId: debate.id,
@@ -1766,6 +1793,8 @@
           title: formatDisplayName(player.name, "Debater"),
           meta: bestCategory ? `${bestCategory.label} - ${getRatingDisplayValue(bestCategory)}` : getRatingDisplayValue(player),
           note: String(player.uid || "").trim() === currentUid ? "Open your profile" : "Open profile page",
+          avatarDataUrl: getAvatarDataUrlForUid(player.uid),
+          avatarSeed: player.uid || player.name,
           page: "dashboard",
           profileUid: player.uid,
           term: ""
@@ -1816,14 +1845,87 @@
     return suggestions;
   }
 
-  function renderSearchSuggestions() {
+  function getRenderedSearchSuggestionMeta(suggestion) {
+    if (suggestion?.debateId) {
+      const debate = state.debates.find((entry) => String(entry?.id || "").trim() === String(suggestion.debateId || "").trim());
+      const people = debate
+        ? [getDebateTeamLabel(debate, "a", "Team A"), getDebateTeamLabel(debate, "b", "Team B")].filter(Boolean).join(" vs ")
+        : "";
+      return [suggestion.categoryLabel || getDebateCategoryLabel(debate?.category), people].filter(Boolean).join(" | ") || "Debate";
+    }
+
+    return suggestion?.meta || suggestion?.note || "";
+  }
+
+  function getRenderedSearchSuggestionNote(suggestion) {
+    if (suggestion?.debateId) {
+      const debate = state.debates.find((entry) => String(entry?.id || "").trim() === String(suggestion.debateId || "").trim());
+      return `Open debate page | ${formatShortDate(debate?.scheduledFor || "")}`;
+    }
+
+    return suggestion?.note || "";
+  }
+
+  function renderSearchSuggestionMedia(suggestion, options = {}) {
+    const detailed = Boolean(options.detailed);
+
+    if (suggestion?.profileUid) {
+      return renderAvatarChipHtml({
+        name: suggestion.title || "Debater",
+        avatarDataUrl: suggestion.avatarDataUrl || "",
+        seed: suggestion.avatarSeed || suggestion.profileUid || suggestion.title || "debater",
+        className: detailed ? "search-result-avatar" : "search-suggestion-avatar"
+      });
+    }
+
+    if (suggestion?.debateId) {
+      if (suggestion.thumbnailUrl) {
+        return `
+          <span class="search-result-thumb">
+            <img
+              class="search-result-thumb-img"
+              src="${escapeHtml(suggestion.thumbnailUrl)}"
+              alt="${escapeHtml(suggestion.title || "Debate thumbnail")}"
+              loading="lazy"
+              decoding="async"
+            />
+          </span>
+        `;
+      }
+
+      return `
+        <span class="search-result-thumb is-fallback">
+          <span class="search-result-thumb-kicker">${escapeHtml(suggestion.kind || "Debate")}</span>
+          <strong>${escapeHtml(suggestion.categoryLabel || "Debate")}</strong>
+        </span>
+      `;
+    }
+
+    if (!detailed) {
+      return "";
+    }
+
+    return `
+      <span class="search-result-thumb is-generic">
+        <span class="search-result-thumb-kicker">${escapeHtml(suggestion.kind || "Search")}</span>
+        <strong>${escapeHtml(String(suggestion.kind || "S").slice(0, 1))}</strong>
+      </span>
+    `;
+  }
+
+  function renderSearchSuggestions(options = {}) {
+    const detailed = Boolean(options.detailed);
     return state.searchSuggestions
       .map((suggestion, index) => {
         const activeClass = index === state.searchHighlightIndex ? " is-active" : "";
+        const detailClass = detailed ? " is-detailed" : "";
+        const mediaMarkup = renderSearchSuggestionMedia(suggestion, { detailed });
+        const metaText = getRenderedSearchSuggestionMeta(suggestion);
+        const noteText = getRenderedSearchSuggestionNote(suggestion);
 
         return `
           <button
-            class="search-suggestion${activeClass}"
+            class="search-suggestion${activeClass}${detailClass}"
             id="search-option-${index}"
             type="button"
             role="option"
@@ -1831,12 +1933,17 @@
             data-action="apply-search-suggestion"
             data-search-index="${index}"
           >
-            <span class="search-suggestion-kind">${escapeHtml(suggestion.kind)}</span>
+            ${
+              detailed
+                ? `<span class="search-suggestion-media">${mediaMarkup}</span>`
+                : `<span class="search-suggestion-kind">${escapeHtml(suggestion.kind)}</span>`
+            }
             <span class="search-suggestion-copy">
+              ${detailed ? `<span class="search-suggestion-kind">${escapeHtml(suggestion.kind)}</span>` : ""}
               <strong>${escapeHtml(suggestion.title)}</strong>
-              <span class="search-suggestion-meta">${escapeHtml(suggestion.meta || suggestion.note || "")}</span>
+              <span class="search-suggestion-meta">${escapeHtml(metaText)}</span>
             </span>
-            <span class="search-suggestion-note">${escapeHtml(suggestion.note || "")}</span>
+            <span class="search-suggestion-note">${escapeHtml(noteText)}</span>
           </button>
         `;
       })
@@ -1865,10 +1972,11 @@
     if (className) {
       classes.push(String(className).trim());
     }
+    const detailed = classes.includes("search-results-panel") || classes.includes("mobile-search-results");
 
     return `
       <div class="${classes.join(" ")}" role="listbox" aria-label="Search results">
-        ${renderSearchSuggestions()}
+        ${renderSearchSuggestions({ detailed })}
       </div>
     `;
   }
@@ -2142,9 +2250,10 @@
 
   function normalizeDebateTeamSize(value, fallback = 1) {
     const numericValue = Number(value);
+    if (numericValue === 3) return 3;
     if (numericValue === 2) return 2;
     if (numericValue === 1) return 1;
-    return Number(fallback) === 2 ? 2 : 1;
+    return [2, 3].includes(Number(fallback)) ? Number(fallback) : 1;
   }
 
   function getDraftParticipantMeta(field) {
@@ -2153,9 +2262,14 @@
   }
 
   function getActiveDraftParticipantFields(teamSize = 1) {
-    return normalizeDebateTeamSize(teamSize, 1) === 2
-      ? [...EXTENDED_DEBATE_PARTICIPANT_FIELDS]
-      : [...PRIMARY_DEBATE_PARTICIPANT_FIELDS];
+    const safeTeamSize = normalizeDebateTeamSize(teamSize, 1);
+    if (safeTeamSize === 2) {
+      return [...EXTENDED_DEBATE_PARTICIPANT_FIELDS];
+    }
+    if (safeTeamSize === 3) {
+      return ["debaterAUid", "debaterA2Uid", "debaterBUid"];
+    }
+    return [...PRIMARY_DEBATE_PARTICIPANT_FIELDS];
   }
 
   function getDraftTeamParticipantFields(teamId, teamSize = 1) {
@@ -3091,9 +3205,23 @@
     const teamB = getDebateTeamParticipants(safeDebate, "b");
     if (!teamA.length || !teamB.length) return null;
     if (teamSize === 2 && (teamA.length < 2 || teamB.length < 2)) return null;
+    if (teamSize === 3 && (teamA.length < 2 || teamB.length < 1 || teamB.length > 1)) return null;
     const allUids = [...teamA, ...teamB].map((entry) => String(entry.uid || "").trim()).filter(Boolean);
     if (!allUids.length || new Set(allUids).size !== allUids.length) return null;
     return { teamSize, teamA, teamB };
+  }
+
+  function getDraftParticipantRequirementMessage(teamSize, context = "scheduling") {
+    const safeContext = String(context || "").trim().toLowerCase() === "logging" ? "logging" : "scheduling";
+    const verb = safeContext === "logging" ? "logging" : "scheduling";
+    const safeTeamSize = normalizeDebateTeamSize(teamSize, 1);
+    if (safeTeamSize === 2) {
+      return `Pick all four debaters before ${verb}.`;
+    }
+    if (safeTeamSize === 3) {
+      return `Pick all three debaters before ${verb}.`;
+    }
+    return `Pick both debaters before ${verb}.`;
   }
 
   function debateMatchesSearch(debate, searchTerm) {
@@ -3910,7 +4038,7 @@
                     avatarClassName: "profile-avatar profile-avatar-lg",
                     labelClassName: "profile-link-strong"
                   })}
-                  <span class="mobile-row-meta">${escapeHtml(renderCompactRecordLine(player))}</span>
+                  <div class="mobile-record-line">${renderRecordChips(player, { compact: true })}</div>
                 </span>
                 <span class="mobile-ranking-side">${escapeHtml(getRatingDisplayValue(player))}</span>
               </button>
@@ -4198,7 +4326,7 @@
     return `
       <div class="draft-participant-shell" data-draft-participants-owner="${escapeHtml(safeOwner)}">
         ${renderDraftTeamSizeToggle(safeOwner)}
-        <div class="debate-team-grid${teamSize === 2 ? " is-2v2" : ""}">
+        <div class="debate-team-grid${teamSize !== 1 ? " is-expanded" : ""}${teamSize === 2 ? " is-2v2" : ""}${teamSize === 3 ? " is-2v1" : ""}">
           ${renderTeamShell("a")}
           ${renderTeamShell("b")}
         </div>
@@ -8686,7 +8814,7 @@
     if (result !== "a" && result !== "b") {
       return { winnerUid: "", winnerName: "" };
     }
-    if (normalizeDebateTeamSize(teamSize, 1) === 2) {
+    if (normalizeDebateTeamSize(teamSize, 1) !== 1) {
       return { winnerUid: "", winnerName: "" };
     }
     const winnerEntry = result === "a" ? teamAEntries?.[0] : teamBEntries?.[0];
@@ -8714,7 +8842,7 @@
       return;
     }
     if (participantSelections.some((entry) => !entry.selection)) {
-      showToast(teamSize === 2 ? "Pick all four debaters before scheduling." : "Pick both debaters before scheduling.", "error");
+      showToast(getDraftParticipantRequirementMessage(teamSize, "scheduling"), "error");
       return;
     }
     if (new Set(participantSelections.map((entry) => entry.selection)).size !== participantSelections.length) {
@@ -8843,7 +8971,7 @@
       return;
     }
     if (participantSelections.some((entry) => !entry.selection)) {
-      showToast(teamSize === 2 ? "Pick all four debaters before logging." : "Pick both debaters before logging.", "error");
+      showToast(getDraftParticipantRequirementMessage(teamSize, "logging"), "error");
       return;
     }
     if (new Set(participantSelections.map((entry) => entry.selection)).size !== participantSelections.length) {

@@ -1242,6 +1242,10 @@ textarea:focus {
   right: auto;
   max-height: none;
   box-shadow: none;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .search-results-shell {
@@ -1296,6 +1300,110 @@ textarea:focus {
 
 .search-suggestion-note {
   text-align: right;
+}
+
+.search-suggestion.is-detailed {
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 14px;
+  min-height: 92px;
+  padding: 12px;
+  border-color: var(--surface-divider);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(212, 176, 103, 0.04));
+}
+
+.search-suggestion.is-detailed:hover,
+.search-suggestion.is-detailed.is-active {
+  border-color: rgba(212, 176, 103, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(212, 176, 103, 0.1));
+}
+
+.search-suggestion-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.search-result-avatar {
+  width: 56px;
+  height: 56px;
+  border-width: 1px;
+}
+
+.search-result-avatar .avatar-chip-initials {
+  font-size: 18px;
+}
+
+.search-result-thumb {
+  width: 100%;
+  height: 66px;
+  overflow: hidden;
+  border: 1px solid var(--surface-divider);
+  border-radius: var(--radius-sm);
+  background: rgba(212, 176, 103, 0.08);
+}
+
+.search-result-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.search-result-thumb.is-fallback,
+.search-result-thumb.is-generic {
+  display: grid;
+  align-content: space-between;
+  padding: 8px;
+  background:
+    linear-gradient(180deg, rgba(212, 176, 103, 0.14), rgba(212, 176, 103, 0.04)),
+    var(--surface-soft);
+}
+
+.search-result-thumb.is-generic {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
+    var(--surface-soft);
+}
+
+.search-result-thumb strong {
+  font-size: 0.92rem;
+  line-height: 1.1;
+}
+
+.search-result-thumb-kicker {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.search-suggestion.is-detailed .search-suggestion-copy {
+  align-content: center;
+  gap: 5px;
+}
+
+.search-suggestion.is-detailed .search-suggestion-copy strong {
+  font-size: 1.02rem;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.search-suggestion.is-detailed .search-suggestion-meta,
+.search-suggestion.is-detailed .search-suggestion-note {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.search-suggestion.is-detailed .search-suggestion-note {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 130px;
+  color: var(--text);
 }
 
 .topbar-meta {
@@ -1955,6 +2063,7 @@ textarea:focus {
 .profile-history-chart-shell {
   position: relative;
   min-width: 0;
+  max-width: 820px;
   border: 1px solid var(--surface-divider);
   border-radius: var(--radius-sm);
   background:
@@ -1969,7 +2078,7 @@ textarea:focus {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 720 / 280;
+  aspect-ratio: 720 / 220;
   overflow: visible;
 }
 
@@ -3525,6 +3634,33 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   right: auto;
   max-height: none;
   margin-top: 0;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.is-mobile-app .search-suggestion.is-detailed {
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 12px 10px;
+}
+
+.is-mobile-app .search-result-thumb {
+  height: 58px;
+}
+
+.is-mobile-app .search-result-avatar {
+  width: 52px;
+  height: 52px;
+}
+
+.is-mobile-app .search-suggestion.is-detailed .search-suggestion-note {
+  grid-column: 2;
+  justify-content: flex-start;
+  min-width: 0;
+  text-align: left;
+  color: var(--text-soft);
 }
 
 .is-mobile-app .mobile-block {
@@ -3739,6 +3875,12 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 .is-mobile-app .mobile-record-line .record-chip-label {
   font-size: 9px;
   letter-spacing: 0.08em;
+}
+
+.is-mobile-app .mobile-ranking-row .record-chip.draw {
+  border-color: var(--surface-divider);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
 }
 
 .is-mobile-app .profile-history-panel {
