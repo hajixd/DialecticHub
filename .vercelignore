@@ -1,0 +1,9 @@
+server.js
+server-bg.log
+verify-server.log
+verify-server.err.log
+start-dialectichub.bat
+start-dialectichub.cmd
+firebase.json
+firestore.rules
+artifacts

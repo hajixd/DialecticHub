@@ -255,29 +255,29 @@ html[data-theme="light"] .avatar-chip {
 .brand-wordmark {
   display: inline-flex;
   align-items: center;
-  gap: 0.06em;
-  font-family: "Space Grotesk", system-ui, sans-serif;
-  font-weight: 700;
-  letter-spacing: -0.08em;
-  line-height: 0.92;
+  gap: 0.02em;
+  padding: 0.08em 0.16em 0.12em;
+  border-radius: 0.18em;
+  background: #0b0e12;
+  font-family: "Bebas Neue", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 0.82;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .brand-wordmark-base {
-  color: var(--text);
+  color: #f8f5ee;
 }
 
 .brand-wordmark-block {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0.9em;
-  padding: 0.02em 0.18em 0.05em;
-  border-radius: 0.16em;
-  background: linear-gradient(180deg, var(--brand-block-strong), var(--brand-block));
-  color: var(--brand-ink);
-  box-shadow: 0 0.12em 0.34em var(--brand-shadow);
+  display: inline-block;
+  min-width: auto;
+  padding: 0;
+  background: none;
+  color: #d4b067;
+  box-shadow: none;
 }
 
 .auth-loading-brand {
@@ -767,10 +767,10 @@ textarea:focus {
 }
 
 .brand-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 6px;
-  box-shadow: 0 10px 22px var(--brand-shadow);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  box-shadow: none;
 }
 
 .brand-copy {

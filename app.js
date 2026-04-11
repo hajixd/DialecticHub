@@ -3021,14 +3021,6 @@
           </section>
         </section>
 
-        <section class="section-panel">
-          <div class="section-header">
-            <div>
-              <h3 class="section-title">Users</h3>
-            </div>
-          </div>
-          ${renderScrollablePanel(renderAdminUserList(), "is-feed")}
-        </section>
       </section>
     `;
   }
@@ -3334,6 +3326,15 @@
               </div>
             </form>
           </section>
+        </section>
+
+        <section class="section-panel">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">Users</h3>
+            </div>
+          </div>
+          ${renderScrollablePanel(renderAdminUserList(), "is-feed")}
         </section>
       </section>
     `;
