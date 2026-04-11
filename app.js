@@ -27,7 +27,7 @@
   const LS_THEME_MODE = "dialectichub_theme_mode_v1";
   const PW_PEPPER = "::codenames_pw_v1";
   const MAX_PROFILE_AVATAR_DATA_URL_LEN = 220000;
-  const PROFILE_AVATAR_OUTPUT_SIZE = 160;
+  const PROFILE_AVATAR_OUTPUT_SIZE = 256;
   const PROFILE_AVATAR_MAX_FILE_BYTES = 10 * 1024 * 1024;
   const AVATAR_CROP_MAX_ZOOM = 3.2;
   const AVATAR_CROP_FRAME_INSET = 18;
@@ -37,7 +37,7 @@
   const PLACEHOLDER_UID_PREFIX = "invite:";
   const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1400;
-  const MIN_RANKED_DEBATES = 5;
+  const MIN_RANKED_DEBATES = 3;
   const FIDE_NEW_PLAYER_K = 40;
   const FIDE_STANDARD_K = 20;
   const FIDE_MASTER_K = 10;
@@ -694,20 +694,31 @@
     return Math.max(200, Number(el.avatarCropViewport?.clientWidth || 0) || 280);
   }
 
+  function getAvatarCropFrameInset() {
+    const cssInset = Number.parseFloat(
+      window.getComputedStyle(el.avatarCropViewport || document.documentElement).getPropertyValue("--avatar-crop-inset")
+    );
+    return Number.isFinite(cssInset) && cssInset >= 0 ? cssInset : AVATAR_CROP_FRAME_INSET;
+  }
+
   function getAvatarCropMetrics(zoomValue = state.avatarCropZoom) {
     const viewportSize = getAvatarCropViewportSize();
+    const cropFrameInset = Math.max(0, getAvatarCropFrameInset());
+    const cropFrameSize = Math.max(1, viewportSize - (cropFrameInset * 2));
     const sourceWidth = Math.max(1, Number(state.avatarCropSourceWidth || 0) || 1);
     const sourceHeight = Math.max(1, Number(state.avatarCropSourceHeight || 0) || 1);
     const zoom = Math.max(1, Math.min(AVATAR_CROP_MAX_ZOOM, Number(zoomValue) || 1));
-    const baseScale = Math.max(viewportSize / sourceWidth, viewportSize / sourceHeight);
+    const baseScale = Math.max(cropFrameSize / sourceWidth, cropFrameSize / sourceHeight);
     const scale = baseScale * zoom;
     const renderWidth = sourceWidth * scale;
     const renderHeight = sourceHeight * scale;
-    const maxOffsetX = Math.max(0, (renderWidth - viewportSize) / 2);
-    const maxOffsetY = Math.max(0, (renderHeight - viewportSize) / 2);
+    const maxOffsetX = Math.max(0, (renderWidth - cropFrameSize) / 2);
+    const maxOffsetY = Math.max(0, (renderHeight - cropFrameSize) / 2);
 
     return {
       viewportSize,
+      cropFrameInset,
+      cropFrameSize,
       sourceWidth,
       sourceHeight,
       zoom,
@@ -750,15 +761,14 @@
     const metrics = getAvatarCropMetrics();
     const imageLeft = (metrics.viewportSize - metrics.renderWidth) / 2 + state.avatarCropOffsetX;
     const imageTop = (metrics.viewportSize - metrics.renderHeight) / 2 + state.avatarCropOffsetY;
-    const cropViewportSize = Math.max(1, metrics.viewportSize - (AVATAR_CROP_FRAME_INSET * 2));
-    const cropSize = cropViewportSize / metrics.scale;
+    const cropSize = metrics.cropFrameSize / metrics.scale;
     const sourceX = Math.max(
       0,
-      Math.min(metrics.sourceWidth - cropSize, (AVATAR_CROP_FRAME_INSET - imageLeft) / metrics.scale)
+      Math.min(metrics.sourceWidth - cropSize, (metrics.cropFrameInset - imageLeft) / metrics.scale)
     );
     const sourceY = Math.max(
       0,
-      Math.min(metrics.sourceHeight - cropSize, (AVATAR_CROP_FRAME_INSET - imageTop) / metrics.scale)
+      Math.min(metrics.sourceHeight - cropSize, (metrics.cropFrameInset - imageTop) / metrics.scale)
     );
 
     return { sourceX, sourceY, cropSize };
@@ -1372,6 +1382,18 @@
     }).format(new Date(millis));
   }
 
+  function formatDateTimeLocalInputValue(value) {
+    const millis = toMillis(value);
+    if (!millis) return "";
+    const date = new Date(millis);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
   function formatShortDate(value) {
     const millis = toMillis(value);
     if (!millis) return "TBD";
@@ -1673,7 +1695,7 @@
           key: `profile:${entry.uid}`,
           kind: "Profile",
           title: formatDisplayName(entry.name, "Debater"),
-          meta: bestCategory ? `${bestCategory.label} - ${bestCategory.ratingRounded} ELO` : "User page",
+          meta: bestCategory ? `${bestCategory.label} - ${getRatingDisplayValue(bestCategory)}` : "User page",
           note: entry.uid === currentUid ? "Open your profile" : "Open profile page",
           page: "dashboard",
           profileUid: entry.uid,
@@ -1731,7 +1753,7 @@
           key: `profile:${player.uid}`,
           kind: "Profile",
           title: formatDisplayName(player.name, "Debater"),
-          meta: bestCategory ? `${bestCategory.label} - ${bestCategory.ratingRounded} ELO` : `${player.ratingRounded} ELO`,
+          meta: bestCategory ? `${bestCategory.label} - ${getRatingDisplayValue(bestCategory)}` : getRatingDisplayValue(player),
           note: String(player.uid || "").trim() === currentUid ? "Open your profile" : "Open profile page",
           page: "dashboard",
           profileUid: player.uid,
@@ -3065,10 +3087,12 @@
 
     return [...players.values()].map((player) => {
       const ratingRounded = roundHalfAwayFromZero(player.rating);
+      const isPublishedRating = player.debates >= MIN_RANKED_DEBATES;
       return {
         ...player,
         ratingRounded,
-        isRanked: player.debates >= MIN_RANKED_DEBATES && ratingRounded >= ELO_BASELINE,
+        isPublishedRating,
+        isRanked: isPublishedRating,
         recordLabel: `${player.wins}-${player.losses}${player.draws ? `-${player.draws}` : ""}`
       };
     });
@@ -3084,6 +3108,7 @@
       losses: 0,
       draws: 0,
       debates: 0,
+      isPublishedRating: false,
       isRanked: false,
       recordLabel: "0-0"
     };
@@ -3580,7 +3605,7 @@
                   })}
                   <span class="mobile-row-meta">${escapeHtml(renderCompactRecordLine(player))}</span>
                 </span>
-                <span class="mobile-ranking-side">${player.ratingRounded}</span>
+                <span class="mobile-ranking-side">${escapeHtml(getRatingDisplayValue(player))}</span>
               </button>
             `;
           })
@@ -3625,7 +3650,7 @@
             </article>
           </div>
           <div class="mobile-record-line">
-            ${renderRecordChips(model.profileSnapshot, { compact: true })}
+            ${renderRecordChips(model.profileSnapshot, { compact: true, labelStyle: "full" })}
           </div>
         </section>
 
@@ -3779,7 +3804,7 @@
           <div class="mobile-section-head">
             <h3>Comments</h3>
           </div>
-          ${renderCommentList(model.selectedDebateComments)}
+          ${renderScrollablePanel(renderCommentList(model.selectedDebateComments), "is-comments")}
           <form class="stack-form" id="debate-comment-form">
             <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
             <label class="field">
@@ -4778,7 +4803,7 @@
         <div class="snapshot-stats">
           <article class="snapshot-stat">
             <span class="summary-label">${escapeHtml(sideCategoryLabel)} ELO</span>
-            <strong>${model.mySnapshot.ratingRounded}</strong>
+            <strong>${escapeHtml(getRatingDisplayValue(model.mySnapshot))}</strong>
           </article>
           <article class="snapshot-stat">
             <span class="summary-label">Debates</span>
@@ -4821,7 +4846,7 @@
                                 </div>
                               </div>
                             </div>
-                            <div class="mini-stat">${player.ratingRounded}</div>
+                            <div class="mini-stat">${escapeHtml(getRatingDisplayValue(player))}</div>
                           </div>
                         `;
                       })
@@ -5401,9 +5426,28 @@
     return field === "debaterBUid" ? "Debater B" : "Debater A";
   }
 
+  function hasPublishedRating(rating) {
+    return Boolean(rating?.isPublishedRating || (Number(rating?.debates || 0) >= MIN_RANKED_DEBATES));
+  }
+
+  function getRatingDisplayValue(rating) {
+    return hasPublishedRating(rating) ? String(roundHalfAwayFromZero(rating?.ratingRounded ?? rating?.rating ?? ELO_BASELINE)) : "?";
+  }
+
+  function getCategoryMetaLabel(rating) {
+    const debateCount = Math.max(0, Number(rating?.debates || 0));
+    if (!hasPublishedRating(rating)) {
+      return `Placement - ${debateCount}/${MIN_RANKED_DEBATES} debates`;
+    }
+    return `${getCategoryRankLabel(rating)} - ${debateCount} ${debateCount === 1 ? "debate" : "debates"}`;
+  }
+
   function getCategoryRankLabel(rating) {
+    if (!hasPublishedRating(rating)) {
+      return "Placement";
+    }
     const safeRank = Number(rating?.rank || 0);
-    return rating?.isRanked && safeRank > 0 ? `#${safeRank}` : "Unranked";
+    return rating?.isRanked && safeRank > 0 ? `#${safeRank}` : "Rated";
   }
 
   function renderVideoModeOptions(selectedMode) {
@@ -5739,13 +5783,11 @@
       <div class="${gridClassName}">
         ${ratings
           .map((rating) => {
-            const debateCount = Number(rating?.debates || 0);
-            const metaLabel = `${getCategoryRankLabel(rating)} - ${debateCount} ${debateCount === 1 ? "debate" : "debates"}`;
             return `
               <article class="${cardClassName}${rating.id === preferredCategoryId ? " is-featured" : ""}">
                 <span class="summary-label">${escapeHtml(rating.label)}</span>
-                <strong class="category-rating-value">${rating.ratingRounded}</strong>
-                <span class="category-rating-meta">${escapeHtml(metaLabel)}</span>
+                <strong class="category-rating-value">${escapeHtml(getRatingDisplayValue(rating))}</strong>
+                <span class="category-rating-meta">${escapeHtml(getCategoryMetaLabel(rating))}</span>
               </article>
             `;
           })
@@ -5784,31 +5826,29 @@
     const debaterALabel = getDraftDebaterLabel("lazy", "debaterAUid", "Debater A");
     const debaterBLabel = getDraftDebaterLabel("lazy", "debaterBUid", "Debater B");
 
+    function renderWinnerButton(value, label, toneClass, activeCopy) {
+      const isActive = activeResult === value;
+      return `
+        <button
+          class="result-btn ${toneClass}${isActive ? " is-active" : ""}"
+          type="button"
+          data-action="set-lazy-result"
+          data-value="${escapeHtml(value)}"
+          aria-pressed="${isActive ? "true" : "false"}"
+        >
+          <span class="winner-btn-copy">
+            <span class="winner-btn-title">${escapeHtml(label)}</span>
+            <span class="winner-btn-note">${escapeHtml(isActive ? activeCopy : "Tap to select")}</span>
+          </span>
+          <span class="winner-btn-indicator" aria-hidden="true">${isActive ? "Selected" : ""}</span>
+        </button>
+      `;
+    }
+
     return `
-      <button
-        class="result-btn win${activeResult === "a" ? " is-active" : ""}"
-      type="button"
-      data-action="set-lazy-result"
-      data-value="a"
-      >
-        ${escapeHtml(debaterALabel)}
-      </button>
-      <button
-        class="result-btn win${activeResult === "b" ? " is-active" : ""}"
-      type="button"
-      data-action="set-lazy-result"
-      data-value="b"
-      >
-        ${escapeHtml(debaterBLabel)}
-      </button>
-      <button
-        class="result-btn draw${activeResult === "draw" ? " is-active" : ""}"
-        type="button"
-        data-action="set-lazy-result"
-        data-value="draw"
-      >
-        Draw
-      </button>
+      ${renderWinnerButton("a", debaterALabel, "win", "Winner selected")}
+      ${renderWinnerButton("b", debaterBLabel, "win", "Winner selected")}
+      ${renderWinnerButton("draw", "Draw", "draw", "Draw selected")}
     `;
   }
 
@@ -5934,6 +5974,33 @@
     `;
   }
 
+  function renderDebateDateEditForm(debate, options = {}) {
+    if (!currentIsAdmin() || !debate) return "";
+    const mobile = Boolean(options.mobile);
+    const safeDebateId = String(debate.id || "").trim();
+    const isBusy = state.actionBusyKey === `${safeDebateId}:date`;
+
+    return `
+      <form class="stack-form debate-date-edit-form${mobile ? " is-mobile" : ""}" id="debate-date-form">
+        <input type="hidden" name="debateId" value="${escapeHtml(safeDebateId)}" />
+        <label class="field">
+          <span>Debate date and time</span>
+          <input
+            type="datetime-local"
+            name="scheduledFor"
+            value="${escapeHtml(formatDateTimeLocalInputValue(debate.scheduledFor))}"
+            ${isBusy ? "disabled" : ""}
+          />
+        </label>
+        <div class="form-actions">
+          <button class="secondary-btn" type="submit" ${isBusy ? "disabled" : ""}>
+            ${isBusy ? "Saving..." : "Save Date"}
+          </button>
+        </div>
+      </form>
+    `;
+  }
+
   function renderDebateAdminTools(debate, options = {}) {
     if (!currentIsAdmin() || !state.debateEditMode || !debate) return "";
 
@@ -5960,6 +6027,7 @@
     let content = "";
     if (isAwaitingReview) {
       content = `
+        ${renderDebateDateEditForm(debate, { mobile })}
         <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
         <div class="${actionsClassName}">
           <button
@@ -5986,6 +6054,7 @@
       `;
     } else if (debate.status === "scheduled") {
       content = `
+        ${renderDebateDateEditForm(debate, { mobile })}
         ${renderResolveVideoField(debate, mobile ? { mobile: true } : {})}
         <div class="${actionsClassName}">
           <button
@@ -6022,6 +6091,7 @@
       `;
     } else if (debate.status === "resolved") {
       content = `
+        ${renderDebateDateEditForm(debate, { mobile })}
         <div class="${actionsClassName}">
           <button
             class="result-btn win"
@@ -6098,13 +6168,17 @@
   function renderRecordChips(player, options = {}) {
     const compact = Boolean(options.compact);
     const showDraws = options.showDraws !== false;
+    const labelStyle = String(options.labelStyle || "").trim().toLowerCase();
+    const winLabel = labelStyle === "full" ? "Win" : "W";
+    const lossLabel = labelStyle === "full" ? "Loss" : "L";
+    const drawLabel = labelStyle === "full" ? "Draw" : "D";
     const items = [
-      { tone: "win", label: "W", value: Number(player?.wins || 0) },
-      { tone: "loss", label: "L", value: Number(player?.losses || 0) }
+      { tone: "win", label: winLabel, value: Number(player?.wins || 0) },
+      { tone: "loss", label: lossLabel, value: Number(player?.losses || 0) }
     ];
 
     if (showDraws) {
-      items.push({ tone: "draw", label: "D", value: Number(player?.draws || 0) });
+      items.push({ tone: "draw", label: drawLabel, value: Number(player?.draws || 0) });
     }
 
     return `
@@ -6188,7 +6262,7 @@
                       avatarClassName: "profile-avatar profile-avatar-lg"
                     })}
                   </td>
-                  <td class="rating-cell">${player.ratingRounded}</td>
+                  <td class="rating-cell">${escapeHtml(getRatingDisplayValue(player))}</td>
                   <td>${renderRecordChips(player, { compact: true })}</td>
                   <td>${player.debates}</td>
                 </tr>
@@ -8143,6 +8217,59 @@
     }
   }
 
+  async function handleDebateDateSubmit(event) {
+    event.preventDefault();
+    if (!state.user) return;
+
+    const formData = new FormData(event.target);
+    const debateId = String(formData.get("debateId") || "").trim();
+    const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
+    const debate = state.debates.find((entry) => entry.id === debateId);
+
+    if (!debate || !currentIsAdmin()) {
+      showToast("You cannot edit that debate date.", "error");
+      return;
+    }
+
+    const scheduledDate = new Date(scheduledForRaw);
+    if (!scheduledForRaw || Number.isNaN(scheduledDate.getTime())) {
+      showToast("Choose a valid debate date and time.", "error");
+      return;
+    }
+
+    state.actionBusyKey = `${debateId}:date`;
+    renderApp({ preserveScroll: true });
+
+    try {
+      if (isPreviewMode()) {
+        state.debates = state.debates.map((entry) => {
+          if (entry.id !== debateId) return entry;
+          return {
+            ...entry,
+            scheduledFor: scheduledDate,
+            updatedAt: new Date()
+          };
+        });
+      } else {
+        await db.collection("debates").doc(debateId).update({
+          scheduledFor: firebase.firestore.Timestamp.fromDate(scheduledDate),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      showToast("Debate date updated.", "success");
+    } catch (error) {
+      console.warn("Could not update debate date", error);
+      const message = isFirestorePermissionDenied(error)
+        ? getAdminRulesDeployMessage("changing debate dates")
+        : "Could not update that debate date right now.";
+      showToast(message, "error");
+    } finally {
+      state.actionBusyKey = "";
+      renderApp({ preserveScroll: true });
+    }
+  }
+
   function getResolveVideoInputValue(debateId) {
     const safeDebateId = String(debateId || "").trim();
     if (!safeDebateId) return "";
@@ -8969,6 +9096,8 @@
         handleScheduleSubmit(event);
       } else if (event.target && event.target.id === "lazy-debate-form") {
         handleLazyDebateSubmit(event);
+      } else if (event.target && event.target.id === "debate-date-form") {
+        handleDebateDateSubmit(event);
       } else if (event.target && event.target.id === "debate-comment-form") {
         handleDebateCommentSubmit(event);
       } else if (event.target && event.target.id === "debate-video-form") {
