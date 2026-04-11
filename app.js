@@ -30,6 +30,10 @@
   const PROFILE_AVATAR_OUTPUT_SIZE = 160;
   const PROFILE_AVATAR_MAX_FILE_BYTES = 10 * 1024 * 1024;
   const AVATAR_CROP_MAX_ZOOM = 3.2;
+  const AVATAR_CROP_FRAME_INSET = 18;
+  const VIDEO_CLIP_SLIDER_MAX_SECONDS = 4 * 60 * 60;
+  const VIDEO_CLIP_SLIDER_STEP_SECONDS = 15;
+  const VIDEO_CLIP_DEFAULT_END_SECONDS = 10 * 60;
   const PLACEHOLDER_UID_PREFIX = "invite:";
   const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1400;
@@ -62,6 +66,7 @@
     debateId: getDebateIdFromUrl(),
     settingsSection: "root",
     scheduleSection: "new",
+    archiveEditMode: false,
     searchTerm: "",
     searchDraft: "",
     searchSuggestions: [],
@@ -462,10 +467,13 @@
       : firebase.firestore.FieldValue.serverTimestamp();
 
     try {
+      const registrySnap = await db.collection("usernames").doc(name).get();
+      const registryAvatarDataUrl = normalizeAvatarDataUrl((registrySnap.exists ? registrySnap.data()?.avatarDataUrl : "") || "");
       await db.collection("users").doc(uid).set(
         {
           username: name,
           name,
+          ...(registryAvatarDataUrl ? { avatarDataUrl: registryAvatarDataUrl } : {}),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
           createdAt
         },
@@ -741,9 +749,16 @@
     const metrics = getAvatarCropMetrics();
     const imageLeft = (metrics.viewportSize - metrics.renderWidth) / 2 + state.avatarCropOffsetX;
     const imageTop = (metrics.viewportSize - metrics.renderHeight) / 2 + state.avatarCropOffsetY;
-    const cropSize = metrics.viewportSize / metrics.scale;
-    const sourceX = Math.max(0, Math.min(metrics.sourceWidth - cropSize, -imageLeft / metrics.scale));
-    const sourceY = Math.max(0, Math.min(metrics.sourceHeight - cropSize, -imageTop / metrics.scale));
+    const cropViewportSize = Math.max(1, metrics.viewportSize - (AVATAR_CROP_FRAME_INSET * 2));
+    const cropSize = cropViewportSize / metrics.scale;
+    const sourceX = Math.max(
+      0,
+      Math.min(metrics.sourceWidth - cropSize, (AVATAR_CROP_FRAME_INSET - imageLeft) / metrics.scale)
+    );
+    const sourceY = Math.max(
+      0,
+      Math.min(metrics.sourceHeight - cropSize, (AVATAR_CROP_FRAME_INSET - imageTop) / metrics.scale)
+    );
 
     return { sourceX, sourceY, cropSize };
   }
@@ -1017,6 +1032,7 @@
     state.profileUid = nextPage === "dashboard" && requestedProfileUid && requestedProfileUid !== currentUid ? requestedProfileUid : "";
     state.debateId = nextPage === "debate" && requestedDebateId ? requestedDebateId : "";
     state.settingsSection = nextPage === "settings" ? normalizeSettingsSection(options.settingsSection || "root") : "root";
+    state.archiveEditMode = nextPage === "archive" ? state.archiveEditMode : false;
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
@@ -1060,6 +1076,12 @@
   function setScheduleSection(section) {
     state.scheduleSection = normalizeScheduleSection(section);
     state.openSelectKey = "";
+    renderApp({ preserveScroll: true });
+  }
+
+  function toggleArchiveEditMode() {
+    if (!currentIsAdmin()) return;
+    state.archiveEditMode = !state.archiveEditMode;
     renderApp({ preserveScroll: true });
   }
 
@@ -1390,6 +1412,13 @@
     return (hours * 3600) + (minutes * 60) + seconds;
   }
 
+  function clampVideoClipSliderSeconds(value, fallback = 0) {
+    const parsed = parseVideoClipSeconds(value);
+    const safeFallback = Number.isFinite(Number(fallback)) ? Number(fallback) : 0;
+    const resolved = Number.isFinite(parsed) ? parsed : safeFallback;
+    return Math.max(0, Math.min(VIDEO_CLIP_SLIDER_MAX_SECONDS, Math.floor(resolved)));
+  }
+
   function formatVideoClipInput(value) {
     const totalSeconds = Number(value);
     if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
@@ -1406,6 +1435,73 @@
     }
 
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function getVideoClipRangeValues(startValue, endValue) {
+    const startSeconds = clampVideoClipSliderSeconds(startValue, 0);
+    const defaultEnd = Math.min(
+      VIDEO_CLIP_SLIDER_MAX_SECONDS,
+      Math.max(VIDEO_CLIP_DEFAULT_END_SECONDS, startSeconds + VIDEO_CLIP_SLIDER_STEP_SECONDS)
+    );
+    let endSeconds = clampVideoClipSliderSeconds(endValue, defaultEnd);
+
+    if (endSeconds <= startSeconds) {
+      endSeconds = Math.min(VIDEO_CLIP_SLIDER_MAX_SECONDS, startSeconds + VIDEO_CLIP_SLIDER_STEP_SECONDS);
+    }
+
+    return { startSeconds, endSeconds };
+  }
+
+  function syncVideoClipSliderGroup(group) {
+    if (!group) return false;
+
+    const startInput = group.querySelector('[data-video-clip-role="start"]');
+    const endInput = group.querySelector('[data-video-clip-role="end"]');
+    const startDisplay = group.querySelector('[data-video-clip-display="start"]');
+    const endDisplay = group.querySelector('[data-video-clip-display="end"]');
+    if (!(startInput instanceof HTMLInputElement) || !(endInput instanceof HTMLInputElement)) return false;
+
+    const startSeconds = clampVideoClipSliderSeconds(startInput.value, 0);
+    const endSeconds = clampVideoClipSliderSeconds(
+      endInput.value,
+      Math.min(VIDEO_CLIP_SLIDER_MAX_SECONDS, startSeconds + VIDEO_CLIP_DEFAULT_END_SECONDS)
+    );
+
+    if (startInput.value !== String(startSeconds)) {
+      startInput.value = String(startSeconds);
+    }
+    if (endInput.value !== String(endSeconds)) {
+      endInput.value = String(endSeconds);
+    }
+    if (startDisplay) {
+      startDisplay.textContent = formatVideoClipInput(startSeconds) || "0:00";
+    }
+    if (endDisplay) {
+      endDisplay.textContent = formatVideoClipInput(endSeconds) || "0:00";
+    }
+
+    group.classList.toggle("is-invalid", endSeconds <= startSeconds);
+    return true;
+  }
+
+  function syncVideoLinkFieldsUi(scope) {
+    const root = scope?.closest ? scope.closest(".video-link-fields") : null;
+    if (!root) return false;
+
+    const modeInput = root.querySelector('select[name="videoMode"], select[data-draft-field="videoMode"], select[data-resolve-video-mode]');
+    const sliderGroup = root.querySelector("[data-video-clip-group]");
+    const isClipMode =
+      modeInput instanceof HTMLSelectElement ? normalizeVideoClipMode(modeInput.value) === "clip" : false;
+
+    if (sliderGroup) {
+      sliderGroup.classList.toggle("is-disabled", !isClipMode);
+      sliderGroup.querySelectorAll('input[type="range"]').forEach((input) => {
+        input.disabled = !isClipMode;
+      });
+      syncVideoClipSliderGroup(sliderGroup);
+    }
+
+    return true;
   }
 
   function getYouTubeEmbedUrl(rawUrl, options = {}) {
@@ -2168,10 +2264,7 @@
 
   function getAdminManagedUsers() {
     return [...state.directory]
-      .filter((entry) => {
-        const uid = String(entry.uid || "").trim();
-        return uid && !isPlaceholderUid(uid);
-      })
+      .filter((entry) => String(entry.uid || "").trim())
       .map((entry) => ({
         ...entry,
         uid: String(entry.uid || "").trim(),
@@ -3287,20 +3380,20 @@
     const winnerName = getDebateWinnerName(debate);
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
-    const matchup = `${formatDisplayName(debate.debaterAName || "debater", "Debater")} vs ${formatDisplayName(
-      debate.debaterBName || "debater",
-      "Debater"
-    )}`;
-    const resultLabel =
-      isAwaitingReview
-        ? `Submitted: ${getDebateSubmittedResultLabel(debate)}`
-        : debate.status === "resolved"
+    const aWinner = debate.status === "resolved" && debate.result === "a";
+    const bWinner = debate.status === "resolved" && debate.result === "b";
+    const aLoser = debate.status === "resolved" && debate.result === "b";
+    const bLoser = debate.status === "resolved" && debate.result === "a";
+    const resultLabel = isAwaitingReview
+      ? `Submitted: ${getDebateSubmittedResultLabel(debate)}`
+      : debate.status === "resolved"
         ? debate.result === "draw"
           ? "Draw"
-          : `${winnerName || "Winner"} won`
-        : "Pending";
-    const resultTone =
-      isAwaitingReview ? " review" : debate.status !== "resolved" ? "" : debate.result === "draw" ? " draw" : " positive";
+          : (winnerName || "Winner")
+        : "";
+    const resultTone = isAwaitingReview ? " review" : debate.result === "draw" ? " draw" : " positive";
+    const showStatusChip = !options.hideStatus;
+    const showResultPill = Boolean(resultLabel);
 
     return `
       <article class="mobile-entry">
@@ -3312,11 +3405,15 @@
         >
           <strong class="mobile-row-title">${escapeHtml(debate.topic || "Untitled debate")}</strong>
           <div class="mobile-row-meta">${escapeHtml(formatDateTime(debate.scheduledFor))}</div>
-          <div class="mobile-row-matchup">${escapeHtml(matchup)}</div>
+          <div class="people-row mobile-row-people">
+            ${renderStaticPersonBadge(debate.debaterAName, { isWinner: aWinner, isLoser: aLoser })}
+            <span class="mini-tag">vs</span>
+            ${renderStaticPersonBadge(debate.debaterBName, { isWinner: bWinner, isLoser: bLoser })}
+          </div>
           <div class="mobile-row-foot">
-            <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
+            ${showStatusChip ? `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>` : ""}
             ${renderCategoryBadge(debate.category)}
-            <span class="result-pill${resultTone}">${escapeHtml(resultLabel)}</span>
+            ${showResultPill ? `<span class="result-pill${resultTone}">${escapeHtml(resultLabel)}</span>` : ""}
           </div>
         </button>
         ${
@@ -3533,6 +3630,13 @@
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
     const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
+    const resultToneClass = isAwaitingReview
+      ? " is-review"
+      : debate.status === "resolved" && debate.result === "draw"
+        ? " is-draw"
+        : debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A"
+          ? " is-winner"
+          : "";
     const commentBusy = state.actionBusyKey === `${debate.id}:comment`;
     const videoBusy = state.actionBusyKey === `${debate.id}:video`;
 
@@ -3626,8 +3730,7 @@
     const safeSection = normalizeScheduleSection(selectedSection);
     const tabs = [
       { id: "new", label: "New Debate" },
-      { id: "upcoming", label: "Upcoming Debates" },
-      { id: "log", label: "Log Debates" }
+      { id: "upcoming", label: "Upcoming Debates" }
     ];
 
     return `
@@ -3840,7 +3943,7 @@
   }
 
   function renderMobileSchedulePage(model) {
-    const scheduleSection = normalizeScheduleSection(state.scheduleSection);
+    const scheduleSection = normalizeScheduleSection(state.scheduleSection) === "upcoming" ? "upcoming" : "new";
 
     return `
       <section class="page-shell mobile-page">
@@ -3852,9 +3955,7 @@
         ${
           scheduleSection === "upcoming"
             ? renderMobileUpcomingDebatesBlock(model)
-            : scheduleSection === "log"
-              ? renderMobileLogDebatesBlock()
-              : renderMobileScheduleFormBlock()
+            : renderMobileScheduleFormBlock()
         }
       </section>
     `;
@@ -3864,10 +3965,17 @@
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block">
-          <span class="page-kicker">Past Debates</span>
-          <h2 class="mobile-page-title">Archive</h2>
+          <div class="mobile-section-head mobile-page-head">
+            <div class="mobile-page-head-copy">
+              <span class="page-kicker">Past Debates</span>
+              <h2 class="mobile-page-title">Archive</h2>
+            </div>
+            ${renderArchiveEditButton({ mobile: true })}
+          </div>
           ${renderMobileDebateList(model.past, {
-            emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet"
+            emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet",
+            hideStatus: true,
+            showAdminControls: currentIsAdmin() && state.archiveEditMode
           })}
         </section>
       </section>
@@ -4409,15 +4517,35 @@
     `;
   }
 
+  function renderScheduleHeroActions(selectedSection) {
+    const safeSection = normalizeScheduleSection(selectedSection);
+    const showingLogDebates = safeSection === "log";
+    return `
+      <div class="page-hero-actions">
+        <button
+          class="secondary-btn${showingLogDebates ? " is-active" : ""}"
+          type="button"
+          data-action="set-schedule-section"
+          data-value="${showingLogDebates ? "new" : "log"}"
+        >
+          ${showingLogDebates ? "Back to Schedule" : "Log Debates"}
+        </button>
+      </div>
+    `;
+  }
+
   function renderSchedulePage(model) {
     const scheduleSection = normalizeScheduleSection(state.scheduleSection);
 
     return `
-      <section class="page-shell">
+      <section class="page-shell schedule-page">
         <section class="page-hero">
-          <div>
-            <span class="page-kicker">Schedule Debate</span>
-            <h2 class="page-title">Schedule</h2>
+          <div class="page-hero-toolbar">
+            <div>
+              <span class="page-kicker">Schedule Debate</span>
+              <h2 class="page-title">${escapeHtml(scheduleSection === "log" ? "Log Debates" : "Schedule")}</h2>
+            </div>
+            ${renderScheduleHeroActions(scheduleSection)}
           </div>
           ${renderScheduleTabs(scheduleSection)}
         </section>
@@ -4437,23 +4565,27 @@
     return `
       <section class="page-shell archive-page">
         <section class="page-hero">
-          <div>
-            <span class="page-kicker">Past Debates</span>
-            <h2 class="page-title">Archive</h2>
+          <div class="page-hero-toolbar">
+            <div>
+              <span class="page-kicker">Past Debates</span>
+              <h2 class="page-title">Archive</h2>
+            </div>
+            ${renderArchiveEditButton()}
           </div>
         </section>
 
         <section class="section-panel archive-feed-panel">
           <div class="section-header">
             <div>
-              <h3 class="section-title">Resolved archive</h3>
+              <h3 class="section-title">Archive</h3>
             </div>
           </div>
           ${renderScrollablePanel(
             renderDebateList(model.past, {
               emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet",
               emptyCopy: "",
-              showAdminControls: currentIsAdmin()
+              hideStatus: true,
+              showAdminControls: currentIsAdmin() && state.archiveEditMode
             }),
             "is-feed"
           )}
@@ -4776,6 +4908,7 @@
             const isAdminRole = role === "admin";
             const nextRoleLabel = isAdminRole ? "Change to User" : "Change to Admin";
             const busy = state.actionBusyKey === `${safeUid}:role`;
+            const canManageAccount = !entry.isPlaceholder;
             return `
               <article class="admin-user-card">
                 <div class="admin-user-head">
@@ -4785,19 +4918,25 @@
                       avatarClassName: "profile-avatar profile-avatar-lg",
                       labelClassName: "profile-link-strong"
                     })}
-                    <span class="admin-user-meta">${escapeHtml(safeUid)}</span>
+                    <span class="admin-user-meta">${escapeHtml(safeUid)}${entry.isPlaceholder ? " • not signed up yet" : ""}</span>
                   </div>
                 </div>
                 <div class="admin-user-actions">
-                  <button
-                    class="secondary-btn admin-user-action-btn"
-                    type="button"
-                    data-action="admin-change-status"
-                    data-profile-uid="${escapeHtml(safeUid)}"
-                    ${busy ? "disabled" : ""}
-                  >
-                    ${busy ? "Saving..." : nextRoleLabel}
-                  </button>
+                  ${
+                    canManageAccount
+                      ? `
+                        <button
+                          class="secondary-btn admin-user-action-btn"
+                          type="button"
+                          data-action="admin-change-status"
+                          data-profile-uid="${escapeHtml(safeUid)}"
+                          ${busy ? "disabled" : ""}
+                        >
+                          ${busy ? "Saving..." : nextRoleLabel}
+                        </button>
+                      `
+                      : ""
+                  }
                   <button
                     class="secondary-btn admin-user-action-btn"
                     type="button"
@@ -4814,14 +4953,20 @@
                   >
                     Change Profile Picture
                   </button>
-                  <button
-                    class="ghost-btn admin-user-action-btn"
-                    type="button"
-                    data-action="admin-change-password"
-                    data-profile-uid="${escapeHtml(safeUid)}"
-                  >
-                    Change Password
-                  </button>
+                  ${
+                    canManageAccount
+                      ? `
+                        <button
+                          class="ghost-btn admin-user-action-btn"
+                          type="button"
+                          data-action="admin-change-password"
+                          data-profile-uid="${escapeHtml(safeUid)}"
+                        >
+                          Change Password
+                        </button>
+                      `
+                      : ""
+                  }
                 </div>
               </article>
             `;
@@ -4921,7 +5066,12 @@
     return `
       <div class="debate-list">
         ${debates
-          .map((debate) => renderDebateCard(debate, { showAdminControls: options.showAdminControls }))
+          .map((debate) =>
+            renderDebateCard(debate, {
+              showAdminControls: options.showAdminControls,
+              hideStatus: options.hideStatus
+            })
+          )
           .join("")}
       </div>
     `;
@@ -4960,7 +5110,7 @@
                 : ""
             }
             <div class="badge-row">
-              <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
+              ${options.hideStatus ? "" : `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>`}
               ${renderCategoryBadge(debate.category)}
             </div>
           </div>
@@ -4977,7 +5127,7 @@
             <span class="detail-label">Category</span>
             <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
           </div>
-          <div class="detail-row${resultDetailValue && resultDetailValue !== "N/A" ? " is-winner" : ""}">
+          <div class="detail-row${resultToneClass}">
             <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
             <strong>${escapeHtml(resultDetailValue)}</strong>
           </div>
@@ -5154,6 +5304,17 @@
     return renderProfileLink(name, uid, classes.join(" "));
   }
 
+  function renderStaticPersonBadge(name, options = {}) {
+    const classes = ["person-badge"];
+    if (options?.isWinner) {
+      classes.push("winner");
+    }
+    if (options?.isLoser) {
+      classes.push("loser");
+    }
+    return `<span class="${classes.join(" ")}">${escapeHtml(formatDisplayName(name || "debater", "Debater"))}</span>`;
+  }
+
   function getDraftFormSelector(owner = "schedule") {
     return owner === "lazy" ? "#lazy-debate-form" : "#schedule-form";
   }
@@ -5179,9 +5340,56 @@
     `;
   }
 
+  function renderVideoClipSliderFields(options = {}) {
+    const safeMode = normalizeVideoClipMode(options.mode);
+    const { startSeconds, endSeconds } = getVideoClipRangeValues(options.startValue, options.endValue);
+    const startInputAttributes = String(options.startInputAttributes || "").trim();
+    const endInputAttributes = String(options.endInputAttributes || "").trim();
+
+    return `
+      <div class="video-clip-slider-grid${safeMode === "clip" ? "" : " is-disabled"}" data-video-clip-group="true">
+        <label class="video-clip-slider-card">
+          <span class="video-clip-slider-head">
+            <span>Start</span>
+            <strong data-video-clip-display="start">${escapeHtml(formatVideoClipInput(startSeconds) || "0:00")}</strong>
+          </span>
+          <input
+            class="video-clip-slider-input"
+            type="range"
+            min="0"
+            max="${VIDEO_CLIP_SLIDER_MAX_SECONDS}"
+            step="${VIDEO_CLIP_SLIDER_STEP_SECONDS}"
+            value="${startSeconds}"
+            data-video-clip-role="start"
+            ${safeMode === "clip" ? "" : "disabled"}
+            ${startInputAttributes}
+          />
+        </label>
+        <label class="video-clip-slider-card">
+          <span class="video-clip-slider-head">
+            <span>End</span>
+            <strong data-video-clip-display="end">${escapeHtml(formatVideoClipInput(endSeconds) || "0:00")}</strong>
+          </span>
+          <input
+            class="video-clip-slider-input"
+            type="range"
+            min="0"
+            max="${VIDEO_CLIP_SLIDER_MAX_SECONDS}"
+            step="${VIDEO_CLIP_SLIDER_STEP_SECONDS}"
+            value="${endSeconds}"
+            data-video-clip-role="end"
+            ${safeMode === "clip" ? "" : "disabled"}
+            ${endInputAttributes}
+          />
+        </label>
+      </div>
+    `;
+  }
+
   function renderDraftVideoFields(owner, draft) {
     const safeOwner = owner === "lazy" ? "lazy" : "schedule";
     const safeDraft = draft || {};
+    const safeMode = normalizeVideoClipMode(safeDraft.videoMode);
     return `
       <div class="video-link-fields">
         <label class="field">
@@ -5206,30 +5414,15 @@
               ${renderVideoModeOptions(safeDraft.videoMode)}
             </select>
           </label>
-          <label class="field">
-            <span>Start</span>
-            <input
-              type="text"
-              name="videoClipStart"
-              data-draft-owner="${escapeHtml(safeOwner)}"
-              data-draft-field="videoClipStart"
-              value="${escapeHtml(String(safeDraft.videoClipStart || "").trim())}"
-              placeholder="1:23"
-            />
-          </label>
-          <label class="field">
-            <span>End</span>
-            <input
-              type="text"
-              name="videoClipEnd"
-              data-draft-owner="${escapeHtml(safeOwner)}"
-              data-draft-field="videoClipEnd"
-              value="${escapeHtml(String(safeDraft.videoClipEnd || "").trim())}"
-              placeholder="4:56"
-            />
-          </label>
         </div>
-        <p class="video-clip-note">For Part of Video, enter a start and end like 1:23 or 1:02:03.</p>
+        ${renderVideoClipSliderFields({
+          mode: safeMode,
+          startValue: safeDraft.videoClipStart,
+          endValue: safeDraft.videoClipEnd,
+          startInputAttributes: `name="videoClipStart" data-draft-owner="${escapeHtml(safeOwner)}" data-draft-field="videoClipStart"`,
+          endInputAttributes: `name="videoClipEnd" data-draft-owner="${escapeHtml(safeOwner)}" data-draft-field="videoClipEnd"`
+        })}
+        <p class="video-clip-note">Use the sliders to choose the part shown when Part of Video is selected.</p>
       </div>
     `;
   }
@@ -5240,8 +5433,6 @@
     const useNames = options.useNames !== false;
     const safePrefix = inputNamePrefix ? `${inputNamePrefix}-` : "";
     const mode = normalizeVideoClipMode(safeDebate.videoClipMode);
-    const startValue = formatVideoClipInput(safeDebate.videoClipStart);
-    const endValue = formatVideoClipInput(safeDebate.videoClipEnd);
 
     return `
       <div class="video-link-fields">
@@ -5266,30 +5457,15 @@
               ${renderVideoModeOptions(mode)}
             </select>
           </label>
-          <label class="field">
-            <span>Start</span>
-            <input
-              type="text"
-              ${useNames ? 'name="videoClipStart"' : ""}
-              ${options.resolveDebateId ? `data-resolve-video-start="${escapeHtml(options.resolveDebateId)}"` : ""}
-              id="${escapeHtml(`${safePrefix}video-start`)}"
-              value="${escapeHtml(startValue)}"
-              placeholder="1:23"
-            />
-          </label>
-          <label class="field">
-            <span>End</span>
-            <input
-              type="text"
-              ${useNames ? 'name="videoClipEnd"' : ""}
-              ${options.resolveDebateId ? `data-resolve-video-end="${escapeHtml(options.resolveDebateId)}"` : ""}
-              id="${escapeHtml(`${safePrefix}video-end`)}"
-              value="${escapeHtml(endValue)}"
-              placeholder="4:56"
-            />
-          </label>
         </div>
-        <p class="video-clip-note">For Part of Video, enter a start and end like 1:23 or 1:02:03.</p>
+        ${renderVideoClipSliderFields({
+          mode,
+          startValue: safeDebate.videoClipStart,
+          endValue: safeDebate.videoClipEnd,
+          startInputAttributes: `${useNames ? 'name="videoClipStart"' : ""} ${options.resolveDebateId ? `data-resolve-video-start="${escapeHtml(options.resolveDebateId)}"` : ""} id="${escapeHtml(`${safePrefix}video-start`)}"`,
+          endInputAttributes: `${useNames ? 'name="videoClipEnd"' : ""} ${options.resolveDebateId ? `data-resolve-video-end="${escapeHtml(options.resolveDebateId)}"` : ""} id="${escapeHtml(`${safePrefix}video-end`)}"`
+        })}
+        <p class="video-clip-note">Use the sliders to choose the exact clip shown when Part of Video is selected.</p>
       </div>
     `;
   }
@@ -5447,7 +5623,7 @@
     const safeCategory = normalizeRankingsCategory(selectedCategory);
 
     return `
-      <div class="leaderboard-tabs" role="tablist" aria-label="Ranking categories">
+      <div class="leaderboard-tabs rankings-tabs" role="tablist" aria-label="Ranking categories">
         ${DEBATE_CATEGORIES.map((category) => {
           const isActive = category.id === safeCategory;
           return `
@@ -5578,8 +5754,8 @@
     }
     if (debate.status !== "resolved") return "Pending";
     if (debate.result === "draw") return "Draw";
-    if (debate.result === "a") return `${formatDisplayName(debate.debaterAName || "debater", "Debater")} won`;
-    if (debate.result === "b") return `${formatDisplayName(debate.debaterBName || "debater", "Debater")} won`;
+    if (debate.result === "a") return `Winner: ${formatDisplayName(debate.debaterAName || "debater", "Debater")}`;
+    if (debate.result === "b") return `Winner: ${formatDisplayName(debate.debaterBName || "debater", "Debater")}`;
     return "Resolved";
   }
 
@@ -5587,12 +5763,26 @@
     if (!debate) return "Pending";
     if (debate.result === "draw") return "Draw";
     if (debate.result === "a") {
-      return `${formatDisplayName(debate.winnerName || debate.debaterAName || "debater", "Debater")} won`;
+      return formatDisplayName(debate.winnerName || debate.debaterAName || "debater", "Debater");
     }
     if (debate.result === "b") {
-      return `${formatDisplayName(debate.winnerName || debate.debaterBName || "debater", "Debater")} won`;
+      return formatDisplayName(debate.winnerName || debate.debaterBName || "debater", "Debater");
     }
     return "Pending";
+  }
+
+  function renderArchiveEditButton(options = {}) {
+    if (!currentIsAdmin()) return "";
+    const mobile = Boolean(options.mobile);
+    return `
+      <button
+        class="secondary-btn archive-edit-btn${mobile ? " archive-edit-btn-mobile" : ""}"
+        type="button"
+        data-action="toggle-archive-edit"
+      >
+        ${state.archiveEditMode ? "Done" : "Edit"}
+      </button>
+    `;
   }
 
   function getDebateWinnerName(debate) {
@@ -6249,6 +6439,7 @@
       "debater";
     const targetDisplayName = formatDisplayName(targetName, "Debater");
     const isOwnTarget = targetUid === viewerUid;
+    const isPlaceholderTarget = isPlaceholderUid(targetUid);
     if (!isOwnTarget && !currentIsAdmin()) {
       throw new Error("Only admins can change another user's profile picture.");
     }
@@ -6279,17 +6470,22 @@
             ? state.username || state.user?.displayName || ""
             : getNameForUid(targetUid, "")
         ) ||
-        (await resolveUsernameForUid(targetUid)) ||
+        (isPlaceholderTarget ? getPlaceholderUsername(targetUid) : (await resolveUsernameForUid(targetUid))) ||
         "";
+      if (!username) {
+        throw new Error("Could not find that username.");
+      }
       const batch = db.batch();
-      batch.set(
-        db.collection("users").doc(targetUid),
-        {
-          avatarDataUrl: dataUrl,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        },
-        { merge: true }
-      );
+      if (!isPlaceholderTarget) {
+        batch.set(
+          db.collection("users").doc(targetUid),
+          {
+            avatarDataUrl: dataUrl,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
       if (username) {
         batch.set(
           db.collection("usernames").doc(username),
@@ -6302,7 +6498,7 @@
       }
       await batch.commit();
 
-      if (isOwnTarget) {
+      if (isOwnTarget && !isPlaceholderTarget) {
         state.selfProfile = {
           ...(state.selfProfile || {}),
           avatarDataUrl: dataUrl
@@ -6484,6 +6680,47 @@
     return Object.keys(patch).length ? patch : null;
   }
 
+  function updateDraftParticipantUid(previousUid, nextUid) {
+    const safePreviousUid = String(previousUid || "").trim();
+    const safeNextUid = String(nextUid || "").trim();
+    if (!safePreviousUid || !safeNextUid || safePreviousUid === safeNextUid) return;
+
+    ["scheduleDraft", "lazyDebateDraft"].forEach((draftKey) => {
+      const draft = state[draftKey];
+      if (!draft || typeof draft !== "object") return;
+      if (String(draft.debaterAUid || "").trim() === safePreviousUid) {
+        draft.debaterAUid = safeNextUid;
+      }
+      if (String(draft.debaterBUid || "").trim() === safePreviousUid) {
+        draft.debaterBUid = safeNextUid;
+      }
+    });
+  }
+
+  function buildPlaceholderRenamePatch(debate, previousUid, nextName) {
+    const safePreviousUid = String(previousUid || "").trim();
+    const safeName = normalizeUsername(nextName || "");
+    const nextPlaceholderUid = makePlaceholderUid(safeName);
+    if (!debate || !safePreviousUid || !safeName || !nextPlaceholderUid) return null;
+
+    const patch = {};
+
+    if (String(debate.debaterAUid || "").trim() === safePreviousUid) {
+      patch.debaterAUid = nextPlaceholderUid;
+      patch.debaterAName = safeName;
+    }
+    if (String(debate.debaterBUid || "").trim() === safePreviousUid) {
+      patch.debaterBUid = nextPlaceholderUid;
+      patch.debaterBName = safeName;
+    }
+    if (String(debate.winnerUid || "").trim() === safePreviousUid) {
+      patch.winnerUid = nextPlaceholderUid;
+      patch.winnerName = safeName;
+    }
+
+    return Object.keys(patch).length ? patch : null;
+  }
+
   function applyPlaceholderClaimLocally(uid, username) {
     const safeUid = String(uid || "").trim();
     const safeName = normalizeUsername(username);
@@ -6531,6 +6768,57 @@
       const patch = buildPlaceholderClaimPatch(debate, safeName, safeUid);
       return patch ? { ...debate, ...patch } : debate;
     });
+    updateDraftParticipantUid(placeholderUid, safeUid);
+  }
+
+  function applyPlaceholderRenameLocally(previousUid, nextName) {
+    const safePreviousUid = String(previousUid || "").trim();
+    const safeName = normalizeUsername(nextName || "");
+    const nextPlaceholderUid = makePlaceholderUid(safeName);
+    if (!safePreviousUid || !safeName || !nextPlaceholderUid) return;
+
+    let foundEntry = false;
+    state.directory = state.directory
+      .map((entry) => {
+        if (String(entry.uid || "").trim() !== safePreviousUid) {
+          return entry;
+        }
+
+        foundEntry = true;
+        return {
+          ...entry,
+          uid: nextPlaceholderUid,
+          actualUid: "",
+          username: safeName,
+          isPlaceholder: true
+        };
+      })
+      .filter((entry, index, array) => {
+        return (
+          array.findIndex(
+            (candidate) =>
+              normalizeUsername(candidate.username || "") === normalizeUsername(entry.username || "")
+          ) === index
+        );
+      });
+
+    if (!foundEntry) {
+      state.directory = [
+        ...state.directory,
+        {
+          uid: nextPlaceholderUid,
+          actualUid: "",
+          username: safeName,
+          isPlaceholder: true
+        }
+      ];
+    }
+
+    state.debates = state.debates.map((debate) => {
+      const patch = buildPlaceholderRenamePatch(debate, safePreviousUid, safeName);
+      return patch ? { ...debate, ...patch } : debate;
+    });
+    updateDraftParticipantUid(safePreviousUid, nextPlaceholderUid);
   }
 
   async function syncPlaceholderClaimAcrossDebates(uid, username) {
@@ -6544,6 +6832,36 @@
         const debate = { id: doc.id, ...(doc.data() || {}) };
         const patch = buildPlaceholderClaimPatch(debate, safeName, safeUid);
         return patch ? { id: doc.id, patch } : null;
+      })
+      .filter(Boolean);
+
+    if (!updates.length) return;
+
+    for (let index = 0; index < updates.length; index += 350) {
+      const batch = db.batch();
+      updates.slice(index, index + 350).forEach((entry) => {
+        batch.set(
+          db.collection("debates").doc(entry.id),
+          {
+            ...entry.patch,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+      });
+      await batch.commit();
+    }
+  }
+
+  async function syncPlaceholderRenameAcrossDebates(previousUid, nextName) {
+    const safePreviousUid = String(previousUid || "").trim();
+    const safeName = normalizeUsername(nextName || "");
+    if (!safePreviousUid || !safeName || isPreviewMode()) return;
+
+    const updates = state.debates
+      .map((debate) => {
+        const patch = buildPlaceholderRenamePatch(debate, safePreviousUid, safeName);
+        return patch ? { id: debate.id, patch } : null;
       })
       .filter(Boolean);
 
@@ -6682,6 +7000,7 @@
   async function submitAdminUsernameChange(targetUid, nextInput) {
     const safeUid = String(targetUid || "").trim();
     if (!currentIsAdmin() || !safeUid) return;
+    const isPlaceholderTarget = isPlaceholderUid(safeUid);
 
     const currentUserUid = String(state.user?.uid || auth.currentUser?.uid || "").trim();
     if (safeUid === currentUserUid) {
@@ -6716,7 +7035,11 @@
     syncAccountModalUi();
 
     if (isPreviewMode()) {
-      applyUsernameLocally(safeUid, next);
+      if (isPlaceholderTarget) {
+        applyPlaceholderRenameLocally(safeUid, next);
+      } else {
+        applyUsernameLocally(safeUid, next);
+      }
       closeAccountModal(true);
       renderApp({ preserveScroll: true });
       showToast("Username updated.", "success");
@@ -6730,7 +7053,7 @@
       const currentRegistry = await db.collection("usernames").doc(current).get();
       const currentData = currentRegistry.exists ? currentRegistry.data() || {} : {};
       const authHandle = String(currentData.authHandle || "").trim() || (await lookupAuthHandleForUsername(current));
-      if (!authHandle) {
+      if (!authHandle && !isPlaceholderTarget) {
         throw new Error("MISSING_AUTH_HANDLE");
       }
 
@@ -6742,7 +7065,7 @@
         const nextData = nextSnap.exists ? nextSnap.data() || {} : {};
         const nextUid = String(nextData.uid || "").trim();
 
-        if (nextSnap.exists && nextUid && nextUid !== safeUid) {
+        if (nextSnap.exists && (isPlaceholderTarget ? current !== next : (nextUid && nextUid !== safeUid))) {
           throw new Error("USERNAME_TAKEN");
         }
 
@@ -6767,34 +7090,50 @@
           nextRef,
           {
             ...nextData,
-            uid: safeUid,
-            authHandle,
+            uid: isPlaceholderTarget ? "" : safeUid,
+            authHandle: isPlaceholderTarget ? "" : authHandle,
+            invitedByUid: isPlaceholderTarget
+              ? (currentTxData.invitedByUid || nextData.invitedByUid || String(state.user?.uid || "").trim())
+              : nextData.invitedByUid || "",
+            invitedByName: isPlaceholderTarget
+              ? (currentTxData.invitedByName || nextData.invitedByName || state.username || "member")
+              : nextData.invitedByName || "",
             avatarDataUrl,
             createdAt,
-            claimedAt,
+            ...(isPlaceholderTarget ? {} : { claimedAt }),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           },
           { merge: true }
         );
-        tx.set(
-          db.collection("users").doc(safeUid),
-          {
-            username: next,
-            name: next,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          },
-          { merge: true }
-        );
+        if (!isPlaceholderTarget) {
+          tx.set(
+            db.collection("users").doc(safeUid),
+            {
+              username: next,
+              name: next,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            },
+            { merge: true }
+          );
+        }
       });
 
       try {
-        await syncUsernameAcrossDebates(safeUid, next);
+        if (isPlaceholderTarget) {
+          await syncPlaceholderRenameAcrossDebates(safeUid, next);
+        } else {
+          await syncUsernameAcrossDebates(safeUid, next);
+        }
       } catch (error) {
         syncedDebateNames = false;
         console.warn("Failed syncing debate names after admin username change", error);
       }
 
-      applyUsernameLocally(safeUid, next);
+      if (isPlaceholderTarget) {
+        applyPlaceholderRenameLocally(safeUid, next);
+      } else {
+        applyUsernameLocally(safeUid, next);
+      }
       closeAccountModal(true);
       renderApp({ preserveScroll: true });
       showToast(
@@ -7026,6 +7365,7 @@
       state.profileUid = "";
       state.settingsSection = "root";
       state.scheduleSection = "new";
+      state.archiveEditMode = false;
       state.directory = [];
       state.debates = [];
       resetSearchState();
@@ -7051,6 +7391,7 @@
       state.rankingsCategory = "";
       state.settingsSection = "root";
       state.scheduleSection = "new";
+      state.archiveEditMode = false;
       state.scheduleDraft = makeDefaultScheduleDraft(String(user.uid || ""));
       state.lazyDebateDraft = makeDefaultLazyDebateDraft();
       await ensureUserDocs(user, state.username);
@@ -7791,8 +8132,17 @@
 
     if (action === "open-log-debates") {
       event.preventDefault();
-      state.scheduleSection = "log";
-      setPage("schedule");
+      if (isMobileViewport()) {
+        setPage("settings", { settingsSection: "lazy" });
+      } else {
+        setPage("schedule", { scheduleSection: "log" });
+      }
+      return;
+    }
+
+    if (action === "toggle-archive-edit") {
+      event.preventDefault();
+      toggleArchiveEditMode();
       return;
     }
 
@@ -7989,6 +8339,8 @@
   }
 
   function handleMainInput(event) {
+    const videoLinkFields = event.target?.closest?.(".video-link-fields") || null;
+
     if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-admin-user-search")) {
       state.adminUserSearchDraft = String(event.target.value || "");
       if (!syncAdminUserSearchUi()) {
@@ -8025,14 +8377,37 @@
       return;
     }
 
+    const isVideoFieldInput =
+      videoLinkFields &&
+      (
+        (event.target instanceof HTMLSelectElement && (
+          event.target.name === "videoMode" || event.target.hasAttribute("data-resolve-video-mode")
+        )) ||
+        ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && (
+          event.target.name === "videoClipStart" ||
+          event.target.name === "videoClipEnd" ||
+          event.target.hasAttribute("data-video-clip-role") ||
+          event.target.hasAttribute("data-resolve-video-start") ||
+          event.target.hasAttribute("data-resolve-video-end")
+        ))
+      );
+
     const field = event.target.getAttribute("data-draft-field");
-    if (!field) return;
+    if (!field) {
+      if (isVideoFieldInput) {
+        syncVideoLinkFieldsUi(videoLinkFields);
+      }
+      return;
+    }
 
     const owner = String(event.target.getAttribute("data-draft-owner") || "schedule").trim();
     const draft = getDraftState(owner);
     if (!draft) return;
 
     setDraftField(owner, field, String(event.target.value || ""));
+    if (videoLinkFields) {
+      syncVideoLinkFieldsUi(videoLinkFields);
+    }
 
   }
 
@@ -8099,6 +8474,7 @@
     state.profileUid = getProfileUidFromUrl();
     state.debateId = getDebateIdFromUrl();
     state.settingsSection = "root";
+    state.archiveEditMode = false;
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
