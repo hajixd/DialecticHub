@@ -119,6 +119,15 @@ service cloud.firestore {
           (
             request.resource.data.status == 'scheduled'
             && request.resource.data.result == 'pending'
+            && request.resource.data.claimedByUid == ''
+          ) || (
+            request.resource.data.status == 'awaiting_review'
+            && (
+              request.resource.data.result == 'a'
+              || request.resource.data.result == 'b'
+              || request.resource.data.result == 'draw'
+            )
+            && request.resource.data.claimedByUid == ''
           ) || (
             isAdmin()
             && request.resource.data.status == 'resolved'
@@ -133,7 +142,10 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow delete: if isAdmin() || (signedIn()
         && resource.data.createdByUid == request.auth.uid
-        && resource.data.status == 'scheduled');
+        && (
+          resource.data.status == 'scheduled'
+          || resource.data.status == 'awaiting_review'
+        ));
     }
   }
 }

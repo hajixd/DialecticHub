@@ -27,11 +27,24 @@
   const LS_THEME_MODE = "dialectichub_theme_mode_v1";
   const PW_PEPPER = "::codenames_pw_v1";
   const MAX_PROFILE_AVATAR_DATA_URL_LEN = 220000;
+  const PROFILE_AVATAR_OUTPUT_SIZE = 160;
+  const PROFILE_AVATAR_MAX_FILE_BYTES = 10 * 1024 * 1024;
+  const AVATAR_CROP_MAX_ZOOM = 3.2;
   const PLACEHOLDER_UID_PREFIX = "invite:";
   const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
-  const ELO_BASELINE = 1200;
-  const ELO_K = 32;
-  const MIN_RANKED_DEBATES = 4;
+  const ELO_BASELINE = 1400;
+  const MIN_RANKED_DEBATES = 5;
+  const FIDE_NEW_PLAYER_K = 40;
+  const FIDE_STANDARD_K = 20;
+  const FIDE_MASTER_K = 10;
+  const FIDE_NEW_PLAYER_GAME_LIMIT = 30;
+  const FIDE_JUNIOR_K_AGE_LIMIT = 18;
+  const FIDE_JUNIOR_K_RATING_LIMIT = 2300;
+  const FIDE_EXPECTED_SCORE_CAP = 400;
+  const FIDE_HIGH_RATING_THRESHOLD = 2400;
+  const FIDE_UNCAPPED_DIFF_MIN_RATING = 2650;
+  const FIDE_PERIOD_K_LIMIT = 700;
+  const FIDE_UNCAPPED_DIFF_START_MS = Date.UTC(2025, 9, 1);
   const AUTH_LOADING_MIN_MS = 240;
   const DEBATE_CATEGORIES = [
     { id: "philosophy", label: "Philosophy" },
@@ -70,6 +83,22 @@
     accountModalBusy: false,
     accountModalTargetUid: "",
     accountModalTargetName: "",
+    accountModalRoleCurrent: "",
+    accountModalRoleNext: "",
+    avatarCropOpen: false,
+    avatarCropBusy: false,
+    avatarCropObjectUrl: "",
+    avatarCropFile: null,
+    avatarCropSourceWidth: 0,
+    avatarCropSourceHeight: 0,
+    avatarCropZoom: 1,
+    avatarCropOffsetX: 0,
+    avatarCropOffsetY: 0,
+    avatarCropDragPointerId: null,
+    avatarCropDragStartX: 0,
+    avatarCropDragStartY: 0,
+    avatarCropDragOriginX: 0,
+    avatarCropDragOriginY: 0,
     isMobileViewport: false,
     themeMode: getStoredThemeMode(),
     rankingsCategory: "",
@@ -128,6 +157,14 @@
     accountModalSubmitBtn: document.getElementById("account-modal-submit-btn"),
     accountModalCancelBtn: document.getElementById("account-modal-cancel-btn"),
     accountModalCloseBtn: document.getElementById("account-modal-close-btn"),
+    avatarCropShell: document.getElementById("avatar-crop-shell"),
+    avatarCropViewport: document.getElementById("avatar-crop-viewport"),
+    avatarCropImage: document.getElementById("avatar-crop-image"),
+    avatarCropZoomInput: document.getElementById("avatar-crop-zoom-input"),
+    avatarCropZoomValue: document.getElementById("avatar-crop-zoom-value"),
+    avatarCropCancelBtn: document.getElementById("avatar-crop-cancel-btn"),
+    avatarCropCloseBtn: document.getElementById("avatar-crop-close-btn"),
+    avatarCropSaveBtn: document.getElementById("avatar-crop-save-btn"),
     adminNavLink: document.getElementById("admin-nav-link"),
     headerRankedCount: document.getElementById("header-ranked-count"),
     headerUpcomingCount: document.getElementById("header-upcoming-count"),
@@ -305,7 +342,14 @@
 
   function normalizeScheduleSection(value) {
     const safeValue = String(value || "").trim().toLowerCase();
-    return safeValue === "upcoming" ? "upcoming" : "new";
+    if (safeValue === "upcoming" || safeValue === "log") {
+      return safeValue;
+    }
+    return "new";
+  }
+
+  function isDebateAwaitingReview(debate) {
+    return String(debate?.status || "").trim() === "awaiting_review";
   }
 
   function getStableCategoryFromSeed(seed) {
@@ -528,6 +572,21 @@
     if (tone) target.classList.add(tone);
   }
 
+  function isFirestorePermissionDenied(error) {
+    const code = String(error?.code || "").trim().toLowerCase();
+    const message = String(error?.message || "").trim().toLowerCase();
+    return (
+      code.includes("permission-denied") ||
+      message.includes("missing or insufficient permissions") ||
+      (message.includes("permission") && message.includes("denied"))
+    );
+  }
+
+  function getAdminRulesDeployMessage(action) {
+    const safeAction = String(action || "editing other users").trim() || "editing other users";
+    return `Firestore is still blocking admins from ${safeAction}. Deploy the latest Firestore rules, then try again.`;
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replace(/&/g, "&amp;")
@@ -590,6 +649,10 @@
     el.userAvatar.setAttribute("aria-label", `${formatDisplayName(state.username || "debater", "Debater")} avatar`);
   }
 
+  function syncBodyModalState() {
+    document.body.classList.toggle("modal-open", Boolean(state.accountModalOpen || state.avatarCropOpen));
+  }
+
   function loadImageElementFromFile(file) {
     return new Promise((resolve, reject) => {
       const blobUrl = URL.createObjectURL(file);
@@ -609,28 +672,240 @@
     });
   }
 
-  async function encodeProfileAvatarFromFile(file) {
+  function validateProfilePictureFile(file) {
     if (!file || !String(file.type || "").toLowerCase().startsWith("image/")) {
       throw new Error("Choose an image file.");
     }
-    if (file.size > 10 * 1024 * 1024) {
+    if (file.size > PROFILE_AVATAR_MAX_FILE_BYTES) {
       throw new Error("Image is too large. Max 10MB.");
     }
+  }
 
-    const image = await loadImageElementFromFile(file);
-    const sourceWidth = Number(image.naturalWidth || image.width || 0);
-    const sourceHeight = Number(image.naturalHeight || image.height || 0);
+  function getAvatarCropViewportSize() {
+    return Math.max(200, Number(el.avatarCropViewport?.clientWidth || 0) || 280);
+  }
+
+  function getAvatarCropMetrics(zoomValue = state.avatarCropZoom) {
+    const viewportSize = getAvatarCropViewportSize();
+    const sourceWidth = Math.max(1, Number(state.avatarCropSourceWidth || 0) || 1);
+    const sourceHeight = Math.max(1, Number(state.avatarCropSourceHeight || 0) || 1);
+    const zoom = Math.max(1, Math.min(AVATAR_CROP_MAX_ZOOM, Number(zoomValue) || 1));
+    const baseScale = Math.max(viewportSize / sourceWidth, viewportSize / sourceHeight);
+    const scale = baseScale * zoom;
+    const renderWidth = sourceWidth * scale;
+    const renderHeight = sourceHeight * scale;
+    const maxOffsetX = Math.max(0, (renderWidth - viewportSize) / 2);
+    const maxOffsetY = Math.max(0, (renderHeight - viewportSize) / 2);
+
+    return {
+      viewportSize,
+      sourceWidth,
+      sourceHeight,
+      zoom,
+      baseScale,
+      scale,
+      renderWidth,
+      renderHeight,
+      maxOffsetX,
+      maxOffsetY
+    };
+  }
+
+  function clampAvatarCropOffsets(offsetX, offsetY, zoomValue = state.avatarCropZoom) {
+    const metrics = getAvatarCropMetrics(zoomValue);
+    return {
+      x: Math.max(-metrics.maxOffsetX, Math.min(metrics.maxOffsetX, Number(offsetX) || 0)),
+      y: Math.max(-metrics.maxOffsetY, Math.min(metrics.maxOffsetY, Number(offsetY) || 0))
+    };
+  }
+
+  function setAvatarCropOffsets(offsetX, offsetY, options = {}) {
+    const clamped = clampAvatarCropOffsets(offsetX, offsetY, options.zoom);
+    state.avatarCropOffsetX = clamped.x;
+    state.avatarCropOffsetY = clamped.y;
+    if (options.sync !== false) {
+      syncAvatarCropModalUi();
+    }
+  }
+
+  function setAvatarCropZoom(value) {
+    const nextZoom = Math.max(1, Math.min(AVATAR_CROP_MAX_ZOOM, Number(value) || 1));
+    state.avatarCropZoom = nextZoom;
+    const clamped = clampAvatarCropOffsets(state.avatarCropOffsetX, state.avatarCropOffsetY, nextZoom);
+    state.avatarCropOffsetX = clamped.x;
+    state.avatarCropOffsetY = clamped.y;
+    syncAvatarCropModalUi();
+  }
+
+  function getAvatarCropSourceRect() {
+    const metrics = getAvatarCropMetrics();
+    const imageLeft = (metrics.viewportSize - metrics.renderWidth) / 2 + state.avatarCropOffsetX;
+    const imageTop = (metrics.viewportSize - metrics.renderHeight) / 2 + state.avatarCropOffsetY;
+    const cropSize = metrics.viewportSize / metrics.scale;
+    const sourceX = Math.max(0, Math.min(metrics.sourceWidth - cropSize, -imageLeft / metrics.scale));
+    const sourceY = Math.max(0, Math.min(metrics.sourceHeight - cropSize, -imageTop / metrics.scale));
+
+    return { sourceX, sourceY, cropSize };
+  }
+
+  function cleanupAvatarCropSession() {
+    if (state.avatarCropObjectUrl) {
+      try {
+        URL.revokeObjectURL(state.avatarCropObjectUrl);
+      } catch (_) {}
+    }
+
+    state.avatarCropOpen = false;
+    state.avatarCropBusy = false;
+    state.avatarCropObjectUrl = "";
+    state.avatarCropFile = null;
+    state.avatarCropSourceWidth = 0;
+    state.avatarCropSourceHeight = 0;
+    state.avatarCropZoom = 1;
+    state.avatarCropOffsetX = 0;
+    state.avatarCropOffsetY = 0;
+    state.avatarCropDragPointerId = null;
+    state.avatarCropDragStartX = 0;
+    state.avatarCropDragStartY = 0;
+    state.avatarCropDragOriginX = 0;
+    state.avatarCropDragOriginY = 0;
+  }
+
+  function syncAvatarCropModalUi() {
+    const isOpen = state.avatarCropOpen && Boolean(state.avatarCropObjectUrl);
+    el.avatarCropShell?.classList.toggle("hidden", !isOpen);
+    el.avatarCropShell?.setAttribute("aria-hidden", isOpen ? "false" : "true");
+    syncBodyModalState();
+
+    if (!isOpen) {
+      if (el.avatarCropImage) {
+        el.avatarCropImage.removeAttribute("src");
+        el.avatarCropImage.style.width = "";
+        el.avatarCropImage.style.height = "";
+        el.avatarCropImage.style.transform = "";
+      }
+      return;
+    }
+
+    const metrics = getAvatarCropMetrics();
+    const clamped = clampAvatarCropOffsets(state.avatarCropOffsetX, state.avatarCropOffsetY, state.avatarCropZoom);
+    state.avatarCropOffsetX = clamped.x;
+    state.avatarCropOffsetY = clamped.y;
+
+    if (el.avatarCropImage) {
+      el.avatarCropImage.src = state.avatarCropObjectUrl;
+      el.avatarCropImage.style.width = `${metrics.renderWidth}px`;
+      el.avatarCropImage.style.height = `${metrics.renderHeight}px`;
+      el.avatarCropImage.style.transform = `translate(calc(-50% + ${state.avatarCropOffsetX}px), calc(-50% + ${state.avatarCropOffsetY}px))`;
+    }
+
+    if (el.avatarCropZoomInput) {
+      el.avatarCropZoomInput.value = String(state.avatarCropZoom);
+      el.avatarCropZoomInput.disabled = state.avatarCropBusy;
+    }
+    if (el.avatarCropZoomValue) {
+      el.avatarCropZoomValue.textContent = `${Math.round(state.avatarCropZoom * 100)}%`;
+    }
+    if (el.avatarCropCancelBtn) {
+      el.avatarCropCancelBtn.disabled = state.avatarCropBusy;
+    }
+    if (el.avatarCropCloseBtn) {
+      el.avatarCropCloseBtn.disabled = state.avatarCropBusy;
+    }
+    if (el.avatarCropSaveBtn) {
+      el.avatarCropSaveBtn.disabled = state.avatarCropBusy;
+      el.avatarCropSaveBtn.textContent = state.avatarCropBusy ? "Saving..." : "Save Picture";
+    }
+  }
+
+  function closeAvatarCropModal(force = false) {
+    if (state.avatarCropBusy && !force) return;
+    cleanupAvatarCropSession();
+    syncAvatarCropModalUi();
+    if (el.profilePictureInput) {
+      el.profilePictureInput.value = "";
+    }
+    state.profilePictureTargetUid = "";
+    state.profilePictureTargetName = "";
+  }
+
+  async function openAvatarCropModal(file) {
+    validateProfilePictureFile(file);
+    const previewUrl = URL.createObjectURL(file);
+
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const previewImage = new Image();
+        previewImage.onload = () => resolve(previewImage);
+        previewImage.onerror = () => reject(new Error("Could not load image."));
+        previewImage.src = previewUrl;
+      });
+
+      cleanupAvatarCropSession();
+      state.avatarCropOpen = true;
+      state.avatarCropBusy = false;
+      state.avatarCropObjectUrl = previewUrl;
+      state.avatarCropFile = file;
+      state.avatarCropSourceWidth = Number(image.naturalWidth || image.width || 0);
+      state.avatarCropSourceHeight = Number(image.naturalHeight || image.height || 0);
+      state.avatarCropZoom = 1;
+      state.avatarCropOffsetX = 0;
+      state.avatarCropOffsetY = 0;
+      syncAvatarCropModalUi();
+
+      window.requestAnimationFrame(() => {
+        syncAvatarCropModalUi();
+      });
+    } catch (error) {
+      try {
+        URL.revokeObjectURL(previewUrl);
+      } catch (_) {}
+      throw error;
+    }
+  }
+
+  function startAvatarCropDrag(event) {
+    if (!state.avatarCropOpen || state.avatarCropBusy || !(event instanceof PointerEvent)) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    state.avatarCropDragPointerId = event.pointerId;
+    state.avatarCropDragStartX = event.clientX;
+    state.avatarCropDragStartY = event.clientY;
+    state.avatarCropDragOriginX = state.avatarCropOffsetX;
+    state.avatarCropDragOriginY = state.avatarCropOffsetY;
+    el.avatarCropViewport?.setPointerCapture?.(event.pointerId);
+  }
+
+  function handleAvatarCropPointerMove(event) {
+    if (!state.avatarCropOpen || state.avatarCropBusy) return;
+    if (!(event instanceof PointerEvent) || state.avatarCropDragPointerId !== event.pointerId) return;
+    event.preventDefault();
+    setAvatarCropOffsets(
+      state.avatarCropDragOriginX + (event.clientX - state.avatarCropDragStartX),
+      state.avatarCropDragOriginY + (event.clientY - state.avatarCropDragStartY)
+    );
+  }
+
+  function finishAvatarCropDrag(event) {
+    if (!(event instanceof PointerEvent) || state.avatarCropDragPointerId !== event.pointerId) return;
+    el.avatarCropViewport?.releasePointerCapture?.(event.pointerId);
+    state.avatarCropDragPointerId = null;
+  }
+
+  async function encodeProfileAvatarFromImageCrop(image, crop = {}) {
+    const sourceWidth = Number(image?.naturalWidth || image?.width || 0);
+    const sourceHeight = Number(image?.naturalHeight || image?.height || 0);
     if (!sourceWidth || !sourceHeight) {
       throw new Error("Could not read image size.");
     }
 
-    const crop = Math.min(sourceWidth, sourceHeight);
-    const sourceX = Math.max(0, Math.floor((sourceWidth - crop) / 2));
-    const sourceY = Math.max(0, Math.floor((sourceHeight - crop) / 2));
-    const outputSize = 160;
+    const requestedCropSize = Math.max(1, Number(crop.cropSize || Math.min(sourceWidth, sourceHeight)) || Math.min(sourceWidth, sourceHeight));
+    const cropSize = Math.min(requestedCropSize, sourceWidth, sourceHeight);
+    const sourceX = Math.max(0, Math.min(sourceWidth - cropSize, Number(crop.sourceX) || 0));
+    const sourceY = Math.max(0, Math.min(sourceHeight - cropSize, Number(crop.sourceY) || 0));
     const canvas = document.createElement("canvas");
-    canvas.width = outputSize;
-    canvas.height = outputSize;
+    canvas.width = PROFILE_AVATAR_OUTPUT_SIZE;
+    canvas.height = PROFILE_AVATAR_OUTPUT_SIZE;
     const context = canvas.getContext("2d");
 
     if (!context) {
@@ -639,7 +914,7 @@
 
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
-    context.drawImage(image, sourceX, sourceY, crop, crop, 0, 0, outputSize, outputSize);
+    context.drawImage(image, sourceX, sourceY, cropSize, cropSize, 0, 0, PROFILE_AVATAR_OUTPUT_SIZE, PROFILE_AVATAR_OUTPUT_SIZE);
 
     let quality = 0.86;
     let encoded = canvas.toDataURL("image/webp", quality);
@@ -663,6 +938,20 @@
     }
 
     return encoded;
+  }
+
+  async function encodeProfileAvatarFromFile(file, crop = null) {
+    validateProfilePictureFile(file);
+    const image = await loadImageElementFromFile(file);
+    if (crop) {
+      return encodeProfileAvatarFromImageCrop(image, crop);
+    }
+    const sourceWidth = Number(image.naturalWidth || image.width || 0);
+    const sourceHeight = Number(image.naturalHeight || image.height || 0);
+    const cropSize = Math.min(sourceWidth, sourceHeight);
+    const sourceX = Math.max(0, Math.floor((sourceWidth - cropSize) / 2));
+    const sourceY = Math.max(0, Math.floor((sourceHeight - cropSize) / 2));
+    return encodeProfileAvatarFromImageCrop(image, { sourceX, sourceY, cropSize });
   }
 
   function currentIsAdmin() {
@@ -758,7 +1047,7 @@
 
   function setSettingsSection(section) {
     const nextSection = normalizeSettingsSection(section);
-    const requiresAdmin = ["awaiting", "lazy", "users"].includes(nextSection);
+    const requiresAdmin = ["awaiting", "users"].includes(nextSection);
     if (requiresAdmin && !currentIsAdmin()) {
       return;
     }
@@ -805,6 +1094,9 @@
         el.adminNavLink.textContent = "Settings";
       }
       el.adminNavLink.classList.remove("hidden");
+      el.adminNavLink.classList.remove("is-disabled");
+      el.adminNavLink.removeAttribute("aria-disabled");
+      el.adminNavLink.removeAttribute("tabindex");
       return;
     }
 
@@ -817,7 +1109,14 @@
     if (el.adminNavLink.textContent !== "Admin") {
       el.adminNavLink.textContent = "Admin";
     }
-    el.adminNavLink.classList.toggle("hidden", !currentIsAdmin());
+    el.adminNavLink.classList.remove("hidden");
+    el.adminNavLink.classList.toggle("is-disabled", !currentIsAdmin());
+    el.adminNavLink.setAttribute("aria-disabled", currentIsAdmin() ? "false" : "true");
+    if (currentIsAdmin()) {
+      el.adminNavLink.removeAttribute("tabindex");
+    } else {
+      el.adminNavLink.setAttribute("tabindex", "-1");
+    }
   }
 
   function openProfile(uid) {
@@ -854,16 +1153,22 @@
     const isOpen = state.accountModalOpen && Boolean(state.accountModalType);
     el.accountModalShell?.classList.toggle("hidden", !isOpen);
     el.accountModalShell?.setAttribute("aria-hidden", isOpen ? "false" : "true");
-    document.body.classList.toggle("modal-open", isOpen);
+    syncBodyModalState();
 
     if (!isOpen) return;
 
     const isUsername = state.accountModalType === "username";
+    const isRole = state.accountModalType === "role";
+    const roleSubmitLabel = normalizeUserRole(state.accountModalRoleNext, "user") === "admin" ? "Change to Admin" : "Change to User";
     const submitLabel = state.accountModalBusy
-      ? isUsername
+      ? isRole
+        ? "Saving..."
+        : isUsername
         ? "Saving..."
         : "Updating..."
-      : isUsername
+      : isRole
+        ? roleSubmitLabel
+        : isUsername
         ? "Save Username"
         : "Update Password";
 
@@ -893,6 +1198,8 @@
     state.accountModalBusy = false;
     state.accountModalTargetUid = "";
     state.accountModalTargetName = "";
+    state.accountModalRoleCurrent = "";
+    state.accountModalRoleNext = "";
     if (el.accountModalForm) {
       el.accountModalForm.reset();
     }
@@ -904,9 +1211,11 @@
   }
 
   function openAccountModal(type, options = {}) {
-    const modalType = type === "password" ? "password" : "username";
+    const modalType = type === "password" ? "password" : type === "role" ? "role" : "username";
     const targetUid = String(options.targetUid || "").trim();
     const targetName = normalizeUsername(options.targetName || getNameForUid(targetUid, "debater"));
+    const roleCurrent = normalizeUserRole(options.currentRole, getUserRoleForUid(targetUid) || "user");
+    const roleNext = normalizeUserRole(options.nextRole, roleCurrent === "admin" ? "user" : "admin");
     closeUserMenu();
 
     if (modalType === "password" && isPreviewMode()) {
@@ -924,6 +1233,8 @@
     state.accountModalBusy = false;
     state.accountModalTargetUid = targetUid;
     state.accountModalTargetName = targetName;
+    state.accountModalRoleCurrent = roleCurrent;
+    state.accountModalRoleNext = roleNext;
     setHint(el.accountModalHint, "", "");
 
     if (modalType === "username") {
@@ -947,6 +1258,29 @@
           </label>
         `;
       }
+    } else if (modalType === "role") {
+      const safeDisplayName = formatDisplayName(targetName || getNameForUid(targetUid, "debater"), "That User");
+      const currentLabel = roleCurrent === "admin" ? "Admin" : "User";
+      const nextLabel = roleNext === "admin" ? "Admin" : "User";
+      if (el.accountModalTitle) el.accountModalTitle.textContent = "Change Status";
+      if (el.accountModalFields) {
+        el.accountModalFields.innerHTML = `
+          <div class="account-modal-summary">
+            <p class="account-modal-note">
+              ${escapeHtml(safeDisplayName)} will switch from <strong>${escapeHtml(currentLabel)}</strong> to
+              <strong>${escapeHtml(nextLabel)}</strong>.
+            </p>
+            <div class="account-modal-kv">
+              <span>Current</span>
+              <strong>${escapeHtml(currentLabel)}</strong>
+            </div>
+            <div class="account-modal-kv">
+              <span>Change to</span>
+              <strong>${escapeHtml(nextLabel)}</strong>
+            </div>
+          </div>
+        `;
+      }
     } else {
       if (el.accountModalTitle) el.accountModalTitle.textContent = "Change Password";
       if (el.accountModalFields) {
@@ -967,7 +1301,11 @@
 
     window.requestAnimationFrame(() => {
       const primaryInput = document.getElementById("account-modal-primary-input");
-      primaryInput?.focus();
+      if (modalType === "role") {
+        el.accountModalSubmitBtn?.focus();
+      } else {
+        primaryInput?.focus();
+      }
       if (modalType === "username" && primaryInput instanceof HTMLInputElement) {
         primaryInput.select();
       }
@@ -1017,7 +1355,59 @@
     }).format(new Date(millis));
   }
 
-  function getYouTubeEmbedUrl(rawUrl) {
+  function normalizeVideoClipMode(value) {
+    return String(value || "").trim().toLowerCase() === "clip" ? "clip" : "full";
+  }
+
+  function parseVideoClipSeconds(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+
+    if (/^\d+$/.test(raw)) {
+      const total = Number(raw);
+      return Number.isFinite(total) && total >= 0 ? Math.floor(total) : null;
+    }
+
+    if (!/^\d{1,3}:\d{1,2}(?::\d{1,2})?$/.test(raw)) {
+      return null;
+    }
+
+    const parts = raw.split(":").map((part) => Number(part));
+    if (parts.some((part) => !Number.isFinite(part) || part < 0)) {
+      return null;
+    }
+
+    while (parts.length < 3) {
+      parts.unshift(0);
+    }
+
+    const [hours, minutes, seconds] = parts;
+    if (minutes >= 60 || seconds >= 60) {
+      return null;
+    }
+
+    return (hours * 3600) + (minutes * 60) + seconds;
+  }
+
+  function formatVideoClipInput(value) {
+    const totalSeconds = Number(value);
+    if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+      return "";
+    }
+
+    const safeSeconds = Math.floor(totalSeconds);
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const seconds = safeSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function getYouTubeEmbedUrl(rawUrl, options = {}) {
     const safeUrl = String(rawUrl || "").trim();
     if (!safeUrl) return "";
 
@@ -1040,7 +1430,19 @@
         return "";
       }
 
-      return `https://www.youtube.com/embed/${videoId}`;
+      const embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
+      const startSeconds = parseVideoClipSeconds(options.startSeconds ?? options.start);
+      const endSeconds = parseVideoClipSeconds(options.endSeconds ?? options.end);
+
+      if (Number.isFinite(startSeconds) && startSeconds >= 0) {
+        embedUrl.searchParams.set("start", String(startSeconds));
+      }
+
+      if (Number.isFinite(endSeconds) && endSeconds > 0) {
+        embedUrl.searchParams.set("end", String(endSeconds));
+      }
+
+      return embedUrl.toString();
     } catch (_) {
       return "";
     }
@@ -1438,6 +1840,83 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  function roundHalfAwayFromZero(value) {
+    const numeric = Number(value) || 0;
+    return numeric < 0 ? -Math.round(Math.abs(numeric)) : Math.round(numeric);
+  }
+
+  function getDebateChronologyMillis(debate) {
+    return toMillis(debate?.scheduledFor) || toMillis(debate?.createdAt) || 0;
+  }
+
+  function getFideRatingPeriodKey(millis) {
+    const safeMillis = Number(millis) || 0;
+    const date = new Date(safeMillis);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    return `${year}-${month}`;
+  }
+
+  function getBirthYearForUid(uid) {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid) return 0;
+
+    const profile = getStoredUserProfileByUid(safeUid);
+    const candidates = [profile?.birthYear, profile?.yearOfBirth, profile?.dobYear];
+
+    for (const value of candidates) {
+      const birthYear = Number(value);
+      if (Number.isInteger(birthYear) && birthYear >= 1900 && birthYear <= 2100) {
+        return birthYear;
+      }
+    }
+
+    return 0;
+  }
+
+  function isFideJuniorForDate(uid, millis) {
+    const birthYear = getBirthYearForUid(uid);
+    if (!birthYear) return false;
+    const debateYear = new Date(Number(millis) || Date.now()).getUTCFullYear();
+    return debateYear <= birthYear + FIDE_JUNIOR_K_AGE_LIMIT;
+  }
+
+  function getFideExpectedScore(playerRating, opponentRating, debateMillis) {
+    const safePlayerRating = Number(playerRating) || ELO_BASELINE;
+    const safeOpponentRating = Number(opponentRating) || ELO_BASELINE;
+    const rawDifference = safeOpponentRating - safePlayerRating;
+    const cappedDifference =
+      debateMillis >= FIDE_UNCAPPED_DIFF_START_MS && safePlayerRating >= FIDE_UNCAPPED_DIFF_MIN_RATING
+        ? rawDifference
+        : Math.max(-FIDE_EXPECTED_SCORE_CAP, Math.min(FIDE_EXPECTED_SCORE_CAP, rawDifference));
+
+    return 1 / (1 + 10 ** (cappedDifference / 400));
+  }
+
+  function getFideKFactor(playerSnapshot, periodGames, periodEndMillis) {
+    const safeGames = Math.max(0, Number(periodGames) || 0);
+    const safeRating = Number(playerSnapshot?.rating) || ELO_BASELINE;
+    const safeDebates = Math.max(0, Number(playerSnapshot?.debates) || 0);
+    const safeUid = String(playerSnapshot?.uid || "").trim();
+    let kFactor = FIDE_STANDARD_K;
+
+    if (safeDebates < FIDE_NEW_PLAYER_GAME_LIMIT) {
+      kFactor = FIDE_NEW_PLAYER_K;
+    } else if (playerSnapshot?.reached2400 || safeRating >= FIDE_HIGH_RATING_THRESHOLD) {
+      kFactor = FIDE_MASTER_K;
+    }
+
+    if (isFideJuniorForDate(safeUid, periodEndMillis) && safeRating < FIDE_JUNIOR_K_RATING_LIMIT) {
+      kFactor = Math.max(kFactor, FIDE_NEW_PLAYER_K);
+    }
+
+    if (safeGames > 0 && kFactor * safeGames > FIDE_PERIOD_K_LIMIT) {
+      kFactor = Math.max(1, Math.floor(FIDE_PERIOD_K_LIMIT / safeGames));
+    }
+
+    return kFactor;
+  }
+
   function makeDefaultScheduleDraft(currentUid) {
     return {
       topic: "",
@@ -1446,7 +1925,9 @@
       moderator: "",
       description: "",
       debaterAUid: currentUid || "",
-      debaterBUid: ""
+      debaterBUid: "",
+      debaterAQuery: "",
+      debaterBQuery: ""
     };
   }
 
@@ -1458,14 +1939,135 @@
       moderator: "",
       description: "",
       videoUrl: "",
+      videoMode: "full",
+      videoClipStart: "",
+      videoClipEnd: "",
       debaterAUid: "",
       debaterBUid: "",
+      debaterAQuery: "",
+      debaterBQuery: "",
       result: "a"
     };
   }
 
   function getDraftState(owner = "schedule") {
     return owner === "lazy" ? state.lazyDebateDraft : state.scheduleDraft;
+  }
+
+  function getDebaterQueryField(field) {
+    const safeField = String(field || "").trim();
+    if (safeField === "debaterAUid") return "debaterAQuery";
+    if (safeField === "debaterBUid") return "debaterBQuery";
+    return "";
+  }
+
+  function getDebaterSelectKey(owner, field) {
+    const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const safeField = String(field || "").trim();
+    return safeField ? `${safeOwner}:${safeField}` : "";
+  }
+
+  function coerceDebaterDraftUniqueness(draft, field) {
+    if (!draft) return;
+
+    if (field === "debaterAUid" && draft.debaterAUid && draft.debaterAUid === draft.debaterBUid) {
+      draft.debaterBUid = "";
+      draft.debaterBQuery = "";
+    }
+
+    if (field === "debaterBUid" && draft.debaterBUid && draft.debaterBUid === draft.debaterAUid) {
+      draft.debaterBUid = "";
+      draft.debaterBQuery = "";
+    }
+  }
+
+  function findDirectoryUserByNormalizedUsername(username, blockedUid = "") {
+    const safeName = normalizeUsername(username);
+    const safeBlockedUid = String(blockedUid || "").trim();
+    if (!safeName) return null;
+
+    return (
+      state.directory.find((entry) => {
+        const uid = String(entry.uid || "").trim();
+        return uid && uid !== safeBlockedUid && normalizeUsername(entry.username || entry.name || "") === safeName;
+      }) || null
+    );
+  }
+
+  function getDraftDebaterQueryValue(owner, field) {
+    const draft = getDraftState(owner);
+    if (!draft) return "";
+
+    const queryField = getDebaterQueryField(field);
+    const rawQuery = queryField ? String(draft[queryField] || "") : "";
+    if (rawQuery) {
+      return rawQuery;
+    }
+
+    const selectedUid = String(draft[field] || "").trim();
+    if (!selectedUid) {
+      return "";
+    }
+
+    return formatDisplayName(getNameForUid(selectedUid, "debater"), "Debater");
+  }
+
+  function getDraftDebaterLabel(owner, field, fallback) {
+    const label = getDraftDebaterQueryValue(owner, field);
+    return label ? formatDisplayName(label, fallback) : fallback;
+  }
+
+  function setDebaterDraftSelection(owner, field, value, displayValue = "") {
+    const draft = getDraftState(owner);
+    if (!draft) return;
+
+    const queryField = getDebaterQueryField(field);
+    draft[field] = String(value || "").trim();
+    if (queryField) {
+      draft[queryField] = draft[field] ? "" : String(displayValue || "").trim();
+    }
+
+    coerceDebaterDraftUniqueness(draft, field);
+  }
+
+  function setDebaterDraftQuery(owner, field, rawValue) {
+    const draft = getDraftState(owner);
+    if (!draft) return;
+
+    const queryField = getDebaterQueryField(field);
+    if (!queryField) return;
+
+    const nextRawValue = String(rawValue || "");
+    const normalizedQuery = normalizeUsername(nextRawValue);
+    const otherField = field === "debaterAUid" ? "debaterBUid" : "debaterAUid";
+    const otherUid = String(draft[otherField] || "").trim();
+    const exactEntry = normalizedQuery ? findDirectoryUserByNormalizedUsername(normalizedQuery, otherUid) : null;
+
+    draft[queryField] = nextRawValue;
+    draft[field] = exactEntry ? String(exactEntry.uid || "").trim() : "";
+
+    coerceDebaterDraftUniqueness(draft, field);
+  }
+
+  function getDraftDebaterSelectionValue(owner, field) {
+    const draft = getDraftState(owner);
+    if (!draft) return "";
+
+    const selectedUid = String(draft[field] || "").trim();
+    if (selectedUid) {
+      return selectedUid;
+    }
+
+    const queryField = getDebaterQueryField(field);
+    const normalizedQuery = normalizeUsername(queryField ? draft[queryField] || "" : "");
+    if (!normalizedQuery || !isValidUsername(normalizedQuery)) {
+      return "";
+    }
+
+    const otherField = field === "debaterAUid" ? "debaterBUid" : "debaterAUid";
+    const otherUid = String(draft[otherField] || "").trim();
+    const exactEntry = findDirectoryUserByNormalizedUsername(normalizedQuery, otherUid);
+    return exactEntry ? String(exactEntry.uid || "").trim() : makePlaceholderUid(normalizedQuery);
   }
 
   function setDraftField(owner, field, value) {
@@ -1478,12 +2080,7 @@
 
     draft[field] = value;
 
-    if (field === "debaterAUid" && draft.debaterAUid === draft.debaterBUid) {
-      draft.debaterBUid = "";
-    }
-    if (field === "debaterBUid" && draft.debaterBUid === draft.debaterAUid) {
-      draft.debaterBUid = "";
-    }
+    coerceDebaterDraftUniqueness(draft, field);
   }
 
   function getDirectoryMap() {
@@ -2137,6 +2734,9 @@
 
   function getDebateStatus(debate) {
     const scheduledMillis = toMillis(debate.scheduledFor);
+    if (isDebateAwaitingReview(debate)) {
+      return { label: "Awaiting Admin", className: "status-review" };
+    }
     if (debate.status === "resolved") {
       return { label: "Resolved", className: "status-resolved" };
     }
@@ -2165,11 +2765,13 @@
   }
 
   function compareDebatesAscending(left, right) {
-    return toMillis(left.scheduledFor) - toMillis(right.scheduledFor);
+    const chronologyDiff = getDebateChronologyMillis(left) - getDebateChronologyMillis(right);
+    if (chronologyDiff) return chronologyDiff;
+    return String(left?.id || "").localeCompare(String(right?.id || ""));
   }
 
   function compareDebatesDescending(left, right) {
-    return toMillis(right.scheduledFor) - toMillis(left.scheduledFor);
+    return compareDebatesAscending(right, left);
   }
 
   function debateIncludesUser(debate, uid) {
@@ -2201,6 +2803,7 @@
           uid: safeUid,
           name: directoryMap.get(safeUid) || normalizeUsername(fallbackName || "") || "debater",
           rating: ELO_BASELINE,
+          reached2400: ELO_BASELINE >= FIDE_HIGH_RATING_THRESHOLD,
           wins: 0,
           losses: 0,
           draws: 0,
@@ -2217,7 +2820,7 @@
       return player;
     }
 
-    debates
+    const ratedDebates = debates
       .filter((debate) => {
         return (
           debate.status === "resolved" &&
@@ -2227,23 +2830,75 @@
           (!selectedCategory || normalizeDebateCategory(debate.category) === selectedCategory)
         );
       })
-      .sort(compareDebatesAscending)
-      .forEach((debate) => {
+      .sort(compareDebatesAscending);
+
+    const ratingPeriods = [];
+    let currentPeriod = null;
+
+    ratedDebates.forEach((debate) => {
+      const debateMillis = getDebateChronologyMillis(debate);
+      const periodKey = getFideRatingPeriodKey(debateMillis);
+
+      if (!currentPeriod || currentPeriod.key !== periodKey) {
+        currentPeriod = { key: periodKey, debates: [] };
+        ratingPeriods.push(currentPeriod);
+      }
+
+      currentPeriod.debates.push({ debate, debateMillis });
+    });
+
+    ratingPeriods.forEach((period) => {
+      const periodSnapshots = new Map();
+      const periodChanges = new Map();
+      let periodEndMillis = 0;
+
+      function getPeriodSnapshot(player) {
+        if (!player) return null;
+        if (!periodSnapshots.has(player.uid)) {
+          periodSnapshots.set(player.uid, {
+            uid: player.uid,
+            rating: player.rating,
+            debates: player.debates,
+            reached2400: Boolean(player.reached2400)
+          });
+        }
+        return periodSnapshots.get(player.uid);
+      }
+
+      function getPeriodChange(uid) {
+        const safeUid = String(uid || "").trim();
+        if (!periodChanges.has(safeUid)) {
+          periodChanges.set(safeUid, {
+            deltaSum: 0,
+            games: 0
+          });
+        }
+        return periodChanges.get(safeUid);
+      }
+
+      period.debates.forEach(({ debate, debateMillis }) => {
         const playerA = ensurePlayer(debate.debaterAUid, debate.debaterAName);
         const playerB = ensurePlayer(debate.debaterBUid, debate.debaterBName);
         if (!playerA || !playerB) return;
 
-        const expectedA = 1 / (1 + 10 ** ((playerB.rating - playerA.rating) / 400));
-        const expectedB = 1 - expectedA;
+        const snapshotA = getPeriodSnapshot(playerA);
+        const snapshotB = getPeriodSnapshot(playerB);
+        const expectedA = getFideExpectedScore(snapshotA.rating, snapshotB.rating, debateMillis);
+        const expectedB = getFideExpectedScore(snapshotB.rating, snapshotA.rating, debateMillis);
         const scoreA = debate.result === "a" ? 1 : debate.result === "b" ? 0 : 0.5;
         const scoreB = 1 - scoreA;
+        const playerAChange = getPeriodChange(playerA.uid);
+        const playerBChange = getPeriodChange(playerB.uid);
 
-        playerA.rating += ELO_K * (scoreA - expectedA);
-        playerB.rating += ELO_K * (scoreB - expectedB);
+        playerAChange.deltaSum += scoreA - expectedA;
+        playerAChange.games += 1;
+        playerBChange.deltaSum += scoreB - expectedB;
+        playerBChange.games += 1;
         playerA.debates += 1;
         playerB.debates += 1;
-        playerA.lastDebateAt = Math.max(playerA.lastDebateAt, toMillis(debate.scheduledFor));
-        playerB.lastDebateAt = Math.max(playerB.lastDebateAt, toMillis(debate.scheduledFor));
+        playerA.lastDebateAt = Math.max(playerA.lastDebateAt, debateMillis);
+        playerB.lastDebateAt = Math.max(playerB.lastDebateAt, debateMillis);
+        periodEndMillis = Math.max(periodEndMillis, debateMillis);
 
         if (debate.result === "a") {
           playerA.wins += 1;
@@ -2257,12 +2912,27 @@
         }
       });
 
+      periodChanges.forEach((change, uid) => {
+        const player = players.get(uid);
+        const snapshot = periodSnapshots.get(uid);
+        if (!player || !snapshot || !change.games) return;
+
+        const kFactor = getFideKFactor(snapshot, change.games, periodEndMillis);
+        const ratingChange = roundHalfAwayFromZero(change.deltaSum * kFactor);
+
+        player.rating += ratingChange;
+        if (player.rating >= FIDE_HIGH_RATING_THRESHOLD) {
+          player.reached2400 = true;
+        }
+      });
+    });
+
     return [...players.values()].map((player) => {
-      const ratingRounded = Math.round(player.rating);
+      const ratingRounded = roundHalfAwayFromZero(player.rating);
       return {
         ...player,
         ratingRounded,
-        isRanked: player.debates >= MIN_RANKED_DEBATES,
+        isRanked: player.debates >= MIN_RANKED_DEBATES && ratingRounded >= ELO_BASELINE,
         recordLabel: `${player.wins}-${player.losses}${player.draws ? `-${player.draws}` : ""}`
       };
     });
@@ -2358,8 +3028,16 @@
     const profileIsCurrentUser = activeProfileUid === viewerUid;
     const selectedDebate = allDebates.find((debate) => debate.id === String(state.debateId || "").trim()) || null;
     const selectedDebateComments = getDebateComments(selectedDebate);
-    const selectedDebateVideoEmbedUrl = getYouTubeEmbedUrl(selectedDebate?.videoUrl || selectedDebate?.videoEmbedUrl || "");
-    const selectedDebateSourcePage = selectedDebate?.status === "resolved" ? "archive" : "schedule";
+    const selectedDebateVideoEmbedUrl = getYouTubeEmbedUrl(selectedDebate?.videoUrl || selectedDebate?.videoEmbedUrl || "", {
+      startSeconds: selectedDebate?.videoClipStart,
+      endSeconds: selectedDebate?.videoClipEnd
+    });
+    const selectedDebateSourcePage =
+      selectedDebate?.status === "resolved"
+        ? "archive"
+        : currentIsAdmin() && isDebateAwaitingReview(selectedDebate)
+          ? "admin"
+          : "schedule";
     const selectedDebateCanEditVideo = canEditDebateVideo(selectedDebate);
 
     return {
@@ -2393,8 +3071,13 @@
       selectedDebateSourcePage,
       selectedDebateCanEditVideo,
       unresolvedQueue: allDebates
-        .filter((debate) => debate.status === "scheduled")
-        .sort(compareDebatesAscending)
+        .filter((debate) => debate.status === "scheduled" || isDebateAwaitingReview(debate))
+        .sort((left, right) => {
+          const leftReview = Number(isDebateAwaitingReview(left));
+          const rightReview = Number(isDebateAwaitingReview(right));
+          if (rightReview !== leftReview) return rightReview - leftReview;
+          return compareDebatesAscending(left, right);
+        })
     };
   }
 
@@ -2600,18 +3283,22 @@
   function renderMobileDebateRow(debate, options = {}) {
     const isBusy = state.actionBusyKey.startsWith(`${debate.id}:`);
     const winnerName = getDebateWinnerName(debate);
+    const debateStatus = getDebateStatus(debate);
+    const isAwaitingReview = isDebateAwaitingReview(debate);
     const matchup = `${formatDisplayName(debate.debaterAName || "debater", "Debater")} vs ${formatDisplayName(
       debate.debaterBName || "debater",
       "Debater"
     )}`;
     const resultLabel =
-      debate.status === "resolved"
+      isAwaitingReview
+        ? `Submitted: ${getDebateSubmittedResultLabel(debate)}`
+        : debate.status === "resolved"
         ? debate.result === "draw"
           ? "Draw"
           : `${winnerName || "Winner"} won`
         : "Pending";
     const resultTone =
-      debate.status !== "resolved" ? "" : debate.result === "draw" ? " draw" : " positive";
+      isAwaitingReview ? " review" : debate.status !== "resolved" ? "" : debate.result === "draw" ? " draw" : " positive";
 
     return `
       <article class="mobile-entry">
@@ -2625,6 +3312,7 @@
           <div class="mobile-row-meta">${escapeHtml(formatDateTime(debate.scheduledFor))}</div>
           <div class="mobile-row-matchup">${escapeHtml(matchup)}</div>
           <div class="mobile-row-foot">
+            <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
             ${renderCategoryBadge(debate.category)}
             <span class="result-pill${resultTone}">${escapeHtml(resultLabel)}</span>
           </div>
@@ -2633,39 +3321,69 @@
           options.showAdminControls && currentIsAdmin()
             ? `
               <div class="mobile-admin-stack" data-action="hold-admin-controls">
-                ${renderResolveVideoField(debate, { mobile: true })}
-                <div class="mobile-admin-actions">
-                  <button
-                    class="result-btn win"
-                    type="button"
-                    data-action="claim-result"
-                    data-debate-id="${escapeHtml(debate.id)}"
-                    data-outcome="a"
-                    ${isBusy ? "disabled" : ""}
-                  >
-                    ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
-                  </button>
-                  <button
-                    class="result-btn win"
-                    type="button"
-                    data-action="claim-result"
-                    data-debate-id="${escapeHtml(debate.id)}"
-                    data-outcome="b"
-                    ${isBusy ? "disabled" : ""}
-                  >
-                    ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
-                  </button>
-                  <button
-                    class="result-btn draw"
-                    type="button"
-                    data-action="claim-result"
-                    data-debate-id="${escapeHtml(debate.id)}"
-                    data-outcome="draw"
-                    ${isBusy ? "disabled" : ""}
-                  >
-                    Draw
-                  </button>
-                </div>
+                ${
+                  isAwaitingReview
+                    ? `
+                      <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
+                      <div class="mobile-admin-actions">
+                        <button
+                          class="result-btn win"
+                          type="button"
+                          data-action="review-submitted-debate"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="accept"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          class="result-btn reopen"
+                          type="button"
+                          data-action="review-submitted-debate"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="decline"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    `
+                    : `
+                      ${renderResolveVideoField(debate, { mobile: true })}
+                      <div class="mobile-admin-actions">
+                        <button
+                          class="result-btn win"
+                          type="button"
+                          data-action="claim-result"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="a"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
+                        </button>
+                        <button
+                          class="result-btn win"
+                          type="button"
+                          data-action="claim-result"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="b"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
+                        </button>
+                        <button
+                          class="result-btn draw"
+                          type="button"
+                          data-action="claim-result"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="draw"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Draw
+                        </button>
+                      </div>
+                    `
+                }
               </div>
             `
             : ""
@@ -2809,6 +3527,10 @@
     const aLoser = debate.status === "resolved" && debate.result === "b";
     const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
+    const debateStatus = getDebateStatus(debate);
+    const isAwaitingReview = isDebateAwaitingReview(debate);
+    const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
+    const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
     const commentBusy = state.actionBusyKey === `${debate.id}:comment`;
     const videoBusy = state.actionBusyKey === `${debate.id}:video`;
 
@@ -2862,20 +3584,12 @@
           ${
             model.selectedDebateCanEditVideo
               ? `
-                <form class="stack-form" id="debate-video-form">
-                  <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
-                  <label class="field">
-                    <span>YouTube link</span>
-                    <input
-                      type="url"
-                      name="videoUrl"
-                      value="${escapeHtml(debate.videoUrl || "")}"
-                      placeholder="https://www.youtube.com/watch?v=..."
-                    />
-                  </label>
-                  <div class="form-actions">
-                    <button class="primary-btn" type="submit" ${videoBusy ? "disabled" : ""}>
-                      ${videoBusy ? "Saving..." : debate.videoUrl ? "Update video" : "Add video"}
+                  <form class="stack-form" id="debate-video-form">
+                    <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
+                    ${renderDebateVideoFormFields(debate, { inputNamePrefix: "mobile-debate-video" })}
+                    <div class="form-actions">
+                      <button class="primary-btn" type="submit" ${videoBusy ? "disabled" : ""}>
+                        ${videoBusy ? "Saving..." : debate.videoUrl ? "Update video" : "Add video"}
                     </button>
                   </div>
                 </form>
@@ -2910,7 +3624,8 @@
     const safeSection = normalizeScheduleSection(selectedSection);
     const tabs = [
       { id: "new", label: "New Debate" },
-      { id: "upcoming", label: "Upcoming Debates" }
+      { id: "upcoming", label: "Upcoming Debates" },
+      { id: "log", label: "Log Debates" }
     ];
 
     return `
@@ -2933,6 +3648,104 @@
           })
           .join("")}
       </div>
+    `;
+  }
+
+  function getLogDebateSubmitLabels() {
+    return currentIsAdmin()
+      ? { idle: "Log debate", busy: "Logging..." }
+      : { idle: "Submit for review", busy: "Submitting..." };
+  }
+
+  function renderLogDebateFormMarkup(options = {}) {
+    const lazyDraft = state.lazyDebateDraft;
+    const submitLabels = getLogDebateSubmitLabels();
+    const mobile = Boolean(options.mobile);
+    const wrapperClassName = mobile ? "field mobile-datetime-field" : "field";
+
+    return `
+      <form class="schedule-form${mobile ? "" : " lazy-debate-form"}" id="lazy-debate-form">
+        <label class="field">
+          <span>Topic${mobile ? "" : " or resolution"}</span>
+          <input
+            type="text"
+            name="topic"
+            data-draft-owner="lazy"
+            data-draft-field="topic"
+            value="${escapeHtml(lazyDraft.topic)}"
+            placeholder="Should group projects count less?"
+            required
+          />
+        </label>
+        <div class="field-row">
+          ${renderDebateCategorySelect("lazy", lazyDraft.category)}
+          <label class="${wrapperClassName}">
+            <span>Date and time</span>
+            <input
+              type="datetime-local"
+              name="scheduledFor"
+              data-draft-owner="lazy"
+              data-draft-field="scheduledFor"
+              value="${escapeHtml(lazyDraft.scheduledFor)}"
+              required
+            />
+          </label>
+        </div>
+        <div class="field-row">
+          ${renderDebaterSelect({
+            label: "Debater A",
+            field: "debaterAUid",
+            selectedUid: lazyDraft.debaterAUid,
+            otherUid: lazyDraft.debaterBUid,
+            owner: "lazy"
+          })}
+          ${renderDebaterSelect({
+            label: "Debater B",
+            field: "debaterBUid",
+            selectedUid: lazyDraft.debaterBUid,
+            otherUid: lazyDraft.debaterAUid,
+            owner: "lazy"
+          })}
+        </div>
+        <label class="field">
+          <span>Moderator</span>
+          <input
+            type="text"
+            name="moderator"
+            data-draft-owner="lazy"
+            data-draft-field="moderator"
+            value="${escapeHtml(lazyDraft.moderator)}"
+            placeholder="${escapeHtml(mobile ? "Optional moderator" : "Optional moderator or judge name")}"
+          />
+        </label>
+        ${renderDraftVideoFields("lazy", lazyDraft)}
+        <label class="field">
+          <span>Description</span>
+          <textarea
+            name="description"
+            data-draft-owner="lazy"
+            data-draft-field="description"
+            placeholder="${escapeHtml(mobile ? "Optional note about the debate." : "Optional note about the debate.")}"
+          >${escapeHtml(lazyDraft.description)}</textarea>
+        </label>
+        <div class="field">
+          <span>Winner</span>
+          <input
+            type="hidden"
+            name="result"
+            value="${escapeHtml(lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a")}"
+          />
+          <div class="winner-picker">
+            ${renderLazyWinnerButtons()}
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="primary-btn" type="submit" ${state.adminLogSaving ? "disabled" : ""}>
+            ${state.adminLogSaving ? submitLabels.busy : submitLabels.idle}
+          </button>
+          <button class="ghost-btn" type="button" data-action="reset-lazy-form">Reset</button>
+        </div>
+      </form>
     `;
   }
 
@@ -2967,7 +3780,7 @@
               otherUid: state.scheduleDraft.debaterAUid
             })}
           </div>
-          <label class="field">
+          <label class="field mobile-datetime-field">
             <span>Date and time</span>
             <input
               type="datetime-local"
@@ -3000,6 +3813,17 @@
     `;
   }
 
+  function renderMobileLogDebatesBlock() {
+    return `
+      <section class="mobile-block">
+        <div class="mobile-section-head">
+          <h3>Log Debates</h3>
+        </div>
+        ${renderLogDebateFormMarkup({ mobile: true })}
+      </section>
+    `;
+  }
+
   function renderMobileUpcomingDebatesBlock(model) {
     return `
       <section class="mobile-block">
@@ -3023,7 +3847,13 @@
           <h2 class="mobile-page-title">Schedule</h2>
           ${renderScheduleTabs(scheduleSection)}
         </section>
-        ${scheduleSection === "upcoming" ? renderMobileUpcomingDebatesBlock(model) : renderMobileScheduleFormBlock()}
+        ${
+          scheduleSection === "upcoming"
+            ? renderMobileUpcomingDebatesBlock(model)
+            : scheduleSection === "log"
+              ? renderMobileLogDebatesBlock()
+              : renderMobileScheduleFormBlock()
+        }
       </section>
     `;
   }
@@ -3060,31 +3890,32 @@
       {
         section: "profile",
         title: "Profile Settings",
-        copy: "Light mode, username, password, avatar, and logout."
-      }
-    ];
-
-    if (currentIsAdmin()) {
-      items.push(
-        {
-          section: "awaiting",
-          title: "Awaiting Results",
-          copy: model.unresolvedQueue.length
+        copy: "Light mode, username, password, avatar, and logout.",
+        disabled: false
+      },
+      {
+        section: "awaiting",
+        title: "Awaiting Results",
+        copy: currentIsAdmin()
+          ? model.unresolvedQueue.length
             ? `${model.unresolvedQueue.length} debate${model.unresolvedQueue.length === 1 ? "" : "s"} waiting.`
             : "Nothing is waiting on admin."
-        },
-        {
-          section: "lazy",
-          title: "Too Lazy Debates",
-          copy: "Log a finished debate directly."
-        },
-        {
-          section: "users",
-          title: "Users",
-          copy: "Search and manage user accounts."
-        }
-      );
-    }
+          : "Admin only",
+        disabled: !currentIsAdmin()
+      },
+      {
+        section: "lazy",
+        title: "Log Debates",
+        copy: currentIsAdmin() ? "Log a finished debate directly." : "Submit a finished debate for admin review.",
+        disabled: false
+      },
+      {
+        section: "users",
+        title: "Users",
+        copy: currentIsAdmin() ? "Search and manage user accounts." : "Admin only",
+        disabled: !currentIsAdmin()
+      }
+    ];
 
     return `
       <section class="page-shell mobile-page">
@@ -3096,10 +3927,11 @@
               .map((item) => {
                 return `
                   <button
-                    class="mobile-settings-tab"
+                    class="mobile-settings-tab${item.disabled ? " is-disabled" : ""}"
                     type="button"
-                    data-action="open-settings-section"
-                    data-settings-section="${escapeHtml(item.section)}"
+                    data-action="${item.section === "lazy" ? "open-log-debates" : "open-settings-section"}"
+                    ${item.section === "lazy" ? "" : `data-settings-section="${escapeHtml(item.section)}"`}
+                    ${item.disabled ? "disabled" : ""}
                   >
                     <strong>${escapeHtml(item.title)}</strong>
                     <span>${escapeHtml(item.copy)}</span>
@@ -3174,89 +4006,9 @@
   }
 
   function renderMobileTooLazyDebatesPage() {
-    const lazyDraft = state.lazyDebateDraft;
-
     return renderMobileSettingsSectionShell(
-      "Too Lazy Debates",
-      `
-        <form class="schedule-form" id="lazy-debate-form">
-          <label class="field">
-            <span>Topic</span>
-            <input
-              type="text"
-              name="topic"
-              data-draft-owner="lazy"
-              data-draft-field="topic"
-              value="${escapeHtml(lazyDraft.topic)}"
-              placeholder="Should group projects count less?"
-              required
-            />
-          </label>
-          ${renderDebateCategorySelect("lazy", lazyDraft.category)}
-          <div class="field-row">
-            ${renderDebaterSelect({
-              label: "Debater A",
-              field: "debaterAUid",
-              selectedUid: lazyDraft.debaterAUid,
-              otherUid: lazyDraft.debaterBUid,
-              owner: "lazy"
-            })}
-            ${renderDebaterSelect({
-              label: "Debater B",
-              field: "debaterBUid",
-              selectedUid: lazyDraft.debaterBUid,
-              otherUid: lazyDraft.debaterAUid,
-              owner: "lazy"
-            })}
-          </div>
-          <label class="field">
-            <span>Date and time</span>
-            <input
-              type="datetime-local"
-              name="scheduledFor"
-              data-draft-owner="lazy"
-              data-draft-field="scheduledFor"
-              value="${escapeHtml(lazyDraft.scheduledFor)}"
-              required
-            />
-          </label>
-          <label class="field">
-            <span>Moderator</span>
-            <input
-              type="text"
-              name="moderator"
-              data-draft-owner="lazy"
-              data-draft-field="moderator"
-              value="${escapeHtml(lazyDraft.moderator)}"
-              placeholder="Optional moderator"
-            />
-          </label>
-          <label class="field">
-            <span>YouTube link</span>
-            <input
-              type="url"
-              name="videoUrl"
-              data-draft-owner="lazy"
-              data-draft-field="videoUrl"
-              value="${escapeHtml(lazyDraft.videoUrl)}"
-              placeholder="Optional YouTube link"
-            />
-          </label>
-          <div class="field">
-            <span>Winner</span>
-            <input type="hidden" name="result" value="${escapeHtml(lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a")}" />
-            <div class="winner-picker">
-              ${renderLazyWinnerButtons()}
-            </div>
-          </div>
-          <div class="form-actions">
-            <button class="primary-btn" type="submit" ${state.adminLogSaving ? "disabled" : ""}>
-              ${state.adminLogSaving ? "Logging..." : "Log debate"}
-            </button>
-            <button class="ghost-btn" type="button" data-action="reset-lazy-form">Reset</button>
-          </div>
-        </form>
-      `
+      "Log Debates",
+      renderLogDebateFormMarkup({ mobile: true })
     );
   }
 
@@ -3271,12 +4023,13 @@
       return renderMobileProfileSettingsPage();
     }
 
+    if (section === "lazy") {
+      return renderMobileTooLazyDebatesPage();
+    }
+
     if (currentIsAdmin()) {
       if (section === "awaiting") {
         return renderMobileAwaitingResultsPage(model);
-      }
-      if (section === "lazy") {
-        return renderMobileTooLazyDebatesPage();
       }
       if (section === "users") {
         return renderMobileUsersSettingsPage();
@@ -3442,6 +4195,7 @@
             <span class="page-kicker">Debate</span>
             <h2 class="page-title">${escapeHtml(debate.topic || "Untitled debate")}</h2>
             <div class="badge-row">
+              <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
               ${renderCategoryBadge(debate.category)}
             </div>
           </div>
@@ -3461,9 +4215,9 @@
               <span class="detail-label">Category</span>
               <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
             </div>
-            <div class="detail-row${winnerName ? " is-winner" : ""}">
-              <span class="detail-label">Winner</span>
-              <strong>${escapeHtml(winnerName || "N/A")}</strong>
+            <div class="detail-row${resultDetailValue && resultDetailValue !== "N/A" ? " is-winner" : ""}">
+              <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
+              <strong>${escapeHtml(resultDetailValue)}</strong>
             </div>
           </div>
 
@@ -3500,15 +4254,7 @@
                 ? `
                   <form class="stack-form" id="debate-video-form">
                     <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
-                    <label class="field">
-                      <span>YouTube link</span>
-                      <input
-                        type="url"
-                        name="videoUrl"
-                        value="${escapeHtml(debate.videoUrl || "")}"
-                        placeholder="https://www.youtube.com/watch?v=..."
-                      />
-                    </label>
+                  ${renderDebateVideoFormFields(debate, { inputNamePrefix: "desktop-debate-video" })}
                     <div class="form-actions">
                       <button class="primary-btn" type="submit" ${videoBusy ? "disabled" : ""}>
                         ${videoBusy ? "Saving..." : debate.videoUrl ? "Update video" : "Add video"}
@@ -3648,6 +4394,19 @@
     `;
   }
 
+  function renderLogDebatesPanel() {
+    return `
+      <section class="section-panel">
+        <div class="section-header">
+          <div>
+            <h3 class="section-title">Log Debates</h3>
+          </div>
+        </div>
+        ${renderLogDebateFormMarkup()}
+      </section>
+    `;
+  }
+
   function renderSchedulePage(model) {
     const scheduleSection = normalizeScheduleSection(state.scheduleSection);
 
@@ -3661,7 +4420,13 @@
           ${renderScheduleTabs(scheduleSection)}
         </section>
 
-        ${scheduleSection === "upcoming" ? renderUpcomingDebatesPanel(model) : renderScheduleFormPanel()}
+        ${
+          scheduleSection === "upcoming"
+            ? renderUpcomingDebatesPanel(model)
+            : scheduleSection === "log"
+              ? renderLogDebatesPanel()
+              : renderScheduleFormPanel()
+        }
       </section>
     `;
   }
@@ -3732,9 +4497,6 @@
         </section>
       `;
     }
-
-    const lazyDraft = state.lazyDebateDraft;
-
     return `
       <section class="page-shell">
         <section class="page-hero">
@@ -3748,7 +4510,7 @@
           <section class="section-panel">
             <div class="section-header">
               <div>
-                <h3 class="section-title">Awaiting result</h3>
+                <h3 class="section-title">Awaiting Results</h3>
               </div>
             </div>
             ${renderScrollablePanel(
@@ -3764,101 +4526,10 @@
           <section class="section-panel">
             <div class="section-header">
               <div>
-                <h3 class="section-title">Too Lazy debates</h3>
+                <h3 class="section-title">Log Debates</h3>
               </div>
             </div>
-            <form class="schedule-form lazy-debate-form" id="lazy-debate-form">
-              <label class="field">
-                <span>Topic or resolution</span>
-                <input
-                  type="text"
-                  name="topic"
-                  data-draft-owner="lazy"
-                  data-draft-field="topic"
-                  value="${escapeHtml(lazyDraft.topic)}"
-                  placeholder="Should group projects count less?"
-                  required
-                />
-              </label>
-              <div class="field-row">
-                ${renderDebateCategorySelect("lazy", lazyDraft.category)}
-                <label class="field">
-                  <span>Date and time</span>
-                  <input
-                    type="datetime-local"
-                    name="scheduledFor"
-                    data-draft-owner="lazy"
-                    data-draft-field="scheduledFor"
-                    value="${escapeHtml(lazyDraft.scheduledFor)}"
-                    required
-                  />
-                </label>
-              </div>
-              <div class="field-row">
-                ${renderDebaterSelect({
-                  label: "Debater A",
-                  field: "debaterAUid",
-                  selectedUid: lazyDraft.debaterAUid,
-                  otherUid: lazyDraft.debaterBUid,
-                  owner: "lazy"
-                })}
-                ${renderDebaterSelect({
-                  label: "Debater B",
-                  field: "debaterBUid",
-                  selectedUid: lazyDraft.debaterBUid,
-                  otherUid: lazyDraft.debaterAUid,
-                  owner: "lazy"
-                })}
-              </div>
-              <label class="field">
-                <span>Moderator</span>
-                <input
-                  type="text"
-                  name="moderator"
-                  data-draft-owner="lazy"
-                  data-draft-field="moderator"
-                  value="${escapeHtml(lazyDraft.moderator)}"
-                  placeholder="Optional moderator or judge name"
-                />
-              </label>
-              <label class="field">
-                <span>YouTube link</span>
-                <input
-                  type="url"
-                  name="videoUrl"
-                  data-draft-owner="lazy"
-                  data-draft-field="videoUrl"
-                  value="${escapeHtml(lazyDraft.videoUrl)}"
-                  placeholder="Optional YouTube link"
-                />
-              </label>
-              <label class="field">
-                <span>Description</span>
-                <textarea
-                  name="description"
-                  data-draft-owner="lazy"
-                  data-draft-field="description"
-                  placeholder="Optional note about the debate."
-                >${escapeHtml(lazyDraft.description)}</textarea>
-              </label>
-              <div class="field">
-                <span>Winner</span>
-                <input
-                  type="hidden"
-                  name="result"
-                  value="${escapeHtml(lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a")}"
-                />
-                <div class="winner-picker">
-                  ${renderLazyWinnerButtons()}
-                </div>
-              </div>
-              <div class="form-actions">
-                <button class="primary-btn" type="submit" ${state.adminLogSaving ? "disabled" : ""}>
-                  ${state.adminLogSaving ? "Logging..." : "Log debate"}
-                </button>
-                <button class="ghost-btn" type="button" data-action="reset-lazy-form">Reset</button>
-              </div>
-            </form>
+            ${renderLogDebateFormMarkup()}
           </section>
         </section>
 
@@ -4262,6 +4933,10 @@
     const aLoser = debate.status === "resolved" && debate.result === "b";
     const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
+    const debateStatus = getDebateStatus(debate);
+    const isAwaitingReview = isDebateAwaitingReview(debate);
+    const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
+    const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
 
     return `
       <article
@@ -4277,7 +4952,13 @@
             <div class="debate-subline">
               ${formatDateTime(debate.scheduledFor)}
             </div>
+            ${
+              isAwaitingReview
+                ? `<div class="debate-subline">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>`
+                : ""
+            }
             <div class="badge-row">
+              <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
               ${renderCategoryBadge(debate.category)}
             </div>
           </div>
@@ -4294,9 +4975,9 @@
             <span class="detail-label">Category</span>
             <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
           </div>
-          <div class="detail-row${winnerName ? " is-winner" : ""}">
-            <span class="detail-label">Winner</span>
-            <strong>${escapeHtml(winnerName || "N/A")}</strong>
+          <div class="detail-row${resultDetailValue && resultDetailValue !== "N/A" ? " is-winner" : ""}">
+            <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
+            <strong>${escapeHtml(resultDetailValue)}</strong>
           </div>
         </div>
 
@@ -4304,55 +4985,84 @@
           options.showAdminControls && currentIsAdmin()
             ? `
               <div class="admin-control-stack" data-action="hold-admin-controls">
-                ${renderResolveVideoField(debate)}
-                <div class="admin-actions">
-                  <button
-                    class="result-btn win"
-                    type="button"
-                    data-action="claim-result"
-                    data-debate-id="${escapeHtml(debate.id)}"
-                    data-outcome="a"
-                    ${isBusy ? "disabled" : ""}
-                  >
-                    ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
-                  </button>
-                  <button
-                    class="result-btn win"
-                    type="button"
-                    data-action="claim-result"
-                    data-debate-id="${escapeHtml(debate.id)}"
-                    data-outcome="b"
-                    ${isBusy ? "disabled" : ""}
-                  >
-                    ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
-                  </button>
-                  <button
-                    class="result-btn draw"
-                    type="button"
-                    data-action="claim-result"
-                    data-debate-id="${escapeHtml(debate.id)}"
-                    data-outcome="draw"
-                    ${isBusy ? "disabled" : ""}
-                  >
-                    Mark draw
-                  </button>
-                  ${
-                    debate.status === "resolved"
-                      ? `
+                ${
+                  isAwaitingReview
+                    ? `
+                      <div class="admin-actions">
+                        <button
+                          class="result-btn win"
+                          type="button"
+                          data-action="review-submitted-debate"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="accept"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Accept
+                        </button>
                         <button
                           class="result-btn reopen"
                           type="button"
-                          data-action="claim-result"
+                          data-action="review-submitted-debate"
                           data-debate-id="${escapeHtml(debate.id)}"
-                          data-outcome="reopen"
+                          data-outcome="decline"
                           ${isBusy ? "disabled" : ""}
                         >
-                          Reopen
+                          Decline
                         </button>
-                      `
-                      : ""
-                  }
-                </div>
+                      </div>
+                    `
+                    : `
+                      ${renderResolveVideoField(debate)}
+                      <div class="admin-actions">
+                        <button
+                          class="result-btn win"
+                          type="button"
+                          data-action="claim-result"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="a"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
+                        </button>
+                        <button
+                          class="result-btn win"
+                          type="button"
+                          data-action="claim-result"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="b"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
+                        </button>
+                        <button
+                          class="result-btn draw"
+                          type="button"
+                          data-action="claim-result"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          data-outcome="draw"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Mark draw
+                        </button>
+                        ${
+                          debate.status === "resolved"
+                            ? `
+                              <button
+                                class="result-btn reopen"
+                                type="button"
+                                data-action="claim-result"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                data-outcome="reopen"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Reopen
+                              </button>
+                            `
+                            : ""
+                        }
+                      </div>
+                    `
+                }
               </div>
             `
             : ""
@@ -4459,16 +5169,153 @@
     return rating?.isRanked && safeRank > 0 ? `#${safeRank}` : "Unranked";
   }
 
+  function renderVideoModeOptions(selectedMode) {
+    const safeMode = normalizeVideoClipMode(selectedMode);
+    return `
+      <option value="full"${safeMode === "full" ? " selected" : ""}>Full Video</option>
+      <option value="clip"${safeMode === "clip" ? " selected" : ""}>Part of Video</option>
+    `;
+  }
+
+  function renderDraftVideoFields(owner, draft) {
+    const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const safeDraft = draft || {};
+    return `
+      <div class="video-link-fields">
+        <label class="field">
+          <span>YouTube link</span>
+          <input
+            type="url"
+            name="videoUrl"
+            data-draft-owner="${escapeHtml(safeOwner)}"
+            data-draft-field="videoUrl"
+            value="${escapeHtml(String(safeDraft.videoUrl || "").trim())}"
+            placeholder="Optional YouTube link"
+          />
+        </label>
+        <div class="field-row video-clip-row">
+          <label class="field video-clip-mode-field">
+            <span>Video</span>
+            <select
+              name="videoMode"
+              data-draft-owner="${escapeHtml(safeOwner)}"
+              data-draft-field="videoMode"
+            >
+              ${renderVideoModeOptions(safeDraft.videoMode)}
+            </select>
+          </label>
+          <label class="field">
+            <span>Start</span>
+            <input
+              type="text"
+              name="videoClipStart"
+              data-draft-owner="${escapeHtml(safeOwner)}"
+              data-draft-field="videoClipStart"
+              value="${escapeHtml(String(safeDraft.videoClipStart || "").trim())}"
+              placeholder="1:23"
+            />
+          </label>
+          <label class="field">
+            <span>End</span>
+            <input
+              type="text"
+              name="videoClipEnd"
+              data-draft-owner="${escapeHtml(safeOwner)}"
+              data-draft-field="videoClipEnd"
+              value="${escapeHtml(String(safeDraft.videoClipEnd || "").trim())}"
+              placeholder="4:56"
+            />
+          </label>
+        </div>
+        <p class="video-clip-note">For Part of Video, enter a start and end like 1:23 or 1:02:03.</p>
+      </div>
+    `;
+  }
+
+  function renderDebateVideoFormFields(debate, options = {}) {
+    const safeDebate = debate || {};
+    const inputNamePrefix = String(options.inputNamePrefix || "").trim();
+    const useNames = options.useNames !== false;
+    const safePrefix = inputNamePrefix ? `${inputNamePrefix}-` : "";
+    const mode = normalizeVideoClipMode(safeDebate.videoClipMode);
+    const startValue = formatVideoClipInput(safeDebate.videoClipStart);
+    const endValue = formatVideoClipInput(safeDebate.videoClipEnd);
+
+    return `
+      <div class="video-link-fields">
+        <label class="field${options.wrapperClassName ? ` ${escapeHtml(options.wrapperClassName)}` : ""}">
+          <span>YouTube link</span>
+          <input
+            type="url"
+            ${useNames ? 'name="videoUrl"' : ""}
+            ${options.resolveDebateId ? `data-resolve-video-input="${escapeHtml(options.resolveDebateId)}"` : ""}
+            value="${escapeHtml(String(safeDebate.videoUrl || "").trim())}"
+            placeholder="Optional YouTube link"
+          />
+        </label>
+        <div class="field-row video-clip-row">
+          <label class="field video-clip-mode-field">
+            <span>Video</span>
+            <select
+              ${useNames ? 'name="videoMode"' : ""}
+              ${options.resolveDebateId ? `data-resolve-video-mode="${escapeHtml(options.resolveDebateId)}"` : ""}
+              id="${escapeHtml(`${safePrefix}video-mode`)}"
+            >
+              ${renderVideoModeOptions(mode)}
+            </select>
+          </label>
+          <label class="field">
+            <span>Start</span>
+            <input
+              type="text"
+              ${useNames ? 'name="videoClipStart"' : ""}
+              ${options.resolveDebateId ? `data-resolve-video-start="${escapeHtml(options.resolveDebateId)}"` : ""}
+              id="${escapeHtml(`${safePrefix}video-start`)}"
+              value="${escapeHtml(startValue)}"
+              placeholder="1:23"
+            />
+          </label>
+          <label class="field">
+            <span>End</span>
+            <input
+              type="text"
+              ${useNames ? 'name="videoClipEnd"' : ""}
+              ${options.resolveDebateId ? `data-resolve-video-end="${escapeHtml(options.resolveDebateId)}"` : ""}
+              id="${escapeHtml(`${safePrefix}video-end`)}"
+              value="${escapeHtml(endValue)}"
+              placeholder="4:56"
+            />
+          </label>
+        </div>
+        <p class="video-clip-note">For Part of Video, enter a start and end like 1:23 or 1:02:03.</p>
+      </div>
+    `;
+  }
+
   function buildDebateVideoPayload(videoUrl, options = {}) {
     const safeVideoUrl = String(videoUrl || "").trim();
-    const embedUrl = safeVideoUrl ? getYouTubeEmbedUrl(safeVideoUrl) : "";
+    const clipMode = normalizeVideoClipMode(options.mode);
+    const clipStart = clipMode === "clip" ? parseVideoClipSeconds(options.start) : null;
+    const clipEnd = clipMode === "clip" ? parseVideoClipSeconds(options.end) : null;
+    const embedUrl = safeVideoUrl
+      ? getYouTubeEmbedUrl(safeVideoUrl, {
+          startSeconds: clipStart,
+          endSeconds: clipEnd
+        })
+      : "";
     if (safeVideoUrl && !embedUrl) {
+      return null;
+    }
+    if (safeVideoUrl && clipMode === "clip" && (!Number.isFinite(clipStart) || !Number.isFinite(clipEnd) || clipEnd <= clipStart)) {
       return null;
     }
 
     return {
       videoUrl: safeVideoUrl,
       videoEmbedUrl: embedUrl,
+      videoClipMode: safeVideoUrl ? clipMode : "full",
+      videoClipStart: safeVideoUrl && clipMode === "clip" ? clipStart : null,
+      videoClipEnd: safeVideoUrl && clipMode === "clip" ? clipEnd : null,
       videoAddedAt: safeVideoUrl ? options.addedAt ?? Date.now() : null,
       videoAddedByUid: safeVideoUrl ? String(options.addedByUid || "").trim() : "",
       videoAddedByName: safeVideoUrl ? String(options.addedByName || "").trim() : ""
@@ -4550,7 +5397,7 @@
   }
 
   function shouldShowResolveVideoField(debate) {
-    return currentIsAdmin() && state.currentPage === "admin" && debate?.status !== "resolved";
+    return currentIsAdmin() && state.currentPage === "admin" && debate?.status === "scheduled";
   }
 
   function renderResolveVideoField(debate, options = {}) {
@@ -4559,15 +5406,12 @@
     const safeDebateId = String(debate?.id || "").trim();
 
     return `
-      <label class="field admin-video-field${options.mobile ? " is-mobile" : ""}" data-action="hold-admin-controls">
-        <span>YouTube link</span>
-        <input
-          type="url"
-          data-resolve-video-input="${escapeHtml(safeDebateId)}"
-          placeholder="Optional YouTube link"
-          value="${escapeHtml(String(debate?.videoUrl || "").trim())}"
-        />
-      </label>
+      <div class="admin-video-field${options.mobile ? " is-mobile" : ""}" data-action="hold-admin-controls">
+        ${renderDebateVideoFormFields(debate, {
+          useNames: false,
+          resolveDebateId: safeDebateId
+        })}
+      </div>
     `;
   }
 
@@ -4624,6 +5468,8 @@
   function renderLazyWinnerButtons() {
     const lazyDraft = state.lazyDebateDraft;
     const activeResult = lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a";
+    const debaterALabel = getDraftDebaterLabel("lazy", "debaterAUid", "Debater A");
+    const debaterBLabel = getDraftDebaterLabel("lazy", "debaterBUid", "Debater B");
 
     return `
       <button
@@ -4632,7 +5478,7 @@
       data-action="set-lazy-result"
       data-value="a"
       >
-        Debater A
+        ${escapeHtml(debaterALabel)}
       </button>
       <button
         class="result-btn win${activeResult === "b" ? " is-active" : ""}"
@@ -4640,7 +5486,7 @@
       data-action="set-lazy-result"
       data-value="b"
       >
-        Debater B
+        ${escapeHtml(debaterBLabel)}
       </button>
       <button
         class="result-btn draw${activeResult === "draw" ? " is-active" : ""}"
@@ -4701,7 +5547,8 @@
     });
 
     ["debaterAUid", "debaterBUid"].forEach((field) => {
-      const root = form.querySelector(`[data-select-root="${field}"]`);
+      const selectKey = getDebaterSelectKey(safeOwner, field);
+      const root = form.querySelector(`[data-select-root="${selectKey}"]`);
       const wrapper = root?.closest("label.field");
       if (!wrapper) return;
       const otherField = field === "debaterAUid" ? "debaterBUid" : "debaterAUid";
@@ -4724,11 +5571,26 @@
   }
 
   function renderResultCopy(debate) {
+    if (isDebateAwaitingReview(debate)) {
+      return `Awaiting admin - ${getDebateSubmittedResultLabel(debate)}`;
+    }
     if (debate.status !== "resolved") return "Pending";
     if (debate.result === "draw") return "Draw";
     if (debate.result === "a") return `${formatDisplayName(debate.debaterAName || "debater", "Debater")} won`;
     if (debate.result === "b") return `${formatDisplayName(debate.debaterBName || "debater", "Debater")} won`;
     return "Resolved";
+  }
+
+  function getDebateSubmittedResultLabel(debate) {
+    if (!debate) return "Pending";
+    if (debate.result === "draw") return "Draw";
+    if (debate.result === "a") {
+      return `${formatDisplayName(debate.winnerName || debate.debaterAName || "debater", "Debater")} won`;
+    }
+    if (debate.result === "b") {
+      return `${formatDisplayName(debate.winnerName || debate.debaterBName || "debater", "Debater")} won`;
+    }
+    return "Pending";
   }
 
   function getDebateWinnerName(debate) {
@@ -4861,23 +5723,28 @@
     `;
   }
 
-  function syncDebaterSelectFilter(field) {
-    const safeField = String(field || "").trim();
-    const root = el.mainContent?.querySelector(`[data-select-root="${safeField}"]`);
+  function syncDebaterSelectFilter(selectKey) {
+    const safeSelectKey = String(selectKey || "").trim();
+    const root = el.mainContent?.querySelector(`[data-select-root="${safeSelectKey}"]`);
     if (!root) return;
 
-    const searchInput = root.querySelector(".custom-select-search");
+    const field = String(root.getAttribute("data-select-field") || "").trim();
+    const owner = String(root.getAttribute("data-select-owner") || "schedule").trim();
+    const draft = getDraftState(owner);
+    const selectedUid = draft ? String(draft[field] || "").trim() : "";
     const createButton = root.querySelector(".custom-select-create");
     const emptyState = root.querySelector(".custom-select-empty");
-    const filterValue = normalizeUsername(searchInput?.value || "");
+    const filterValue = normalizeUsername(getDraftDebaterQueryValue(owner, field));
     let visibleCount = 0;
     let exactMatch = false;
 
     root.querySelectorAll('.custom-select-option[data-action="choose-debater"]').forEach((node) => {
       const label = normalizeUsername(node.getAttribute("data-label") || node.textContent || "");
+      const value = String(node.getAttribute("data-value") || "").trim();
       const isClearOption = node.getAttribute("data-empty-option") === "true";
       const isVisible = isClearOption ? !filterValue : !filterValue || label.includes(filterValue);
       node.classList.toggle("hidden", !isVisible);
+      node.classList.toggle("is-selected", !isClearOption && value === selectedUid);
       if (isVisible) {
         visibleCount += 1;
       }
@@ -4903,10 +5770,11 @@
   function renderDebaterSelect({ label, field, selectedUid, otherUid, owner = "schedule" }) {
     const safeField = String(field || "").trim();
     const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const selectKey = getDebaterSelectKey(safeOwner, safeField);
     const selected = String(selectedUid || "").trim();
     const blocked = String(otherUid || "").trim();
-    const isOpen = state.openSelectKey === safeField;
-    const selectedName = selected ? formatDisplayName(getNameForUid(selected, "debater"), "Debater") : "";
+    const isOpen = state.openSelectKey === selectKey;
+    const inputValue = getDraftDebaterQueryValue(safeOwner, safeField);
     const options = [
       '<button class="custom-select-option" type="button" data-action="choose-debater" data-empty-option="true" data-label="" data-select-field="' +
         escapeHtml(safeField) +
@@ -4937,35 +5805,42 @@
     return `
       <label class="field">
         <span>${escapeHtml(label)}</span>
-        <div class="custom-select${isOpen ? " is-open" : ""}" data-select-root="${escapeHtml(safeField)}">
+        <div
+          class="custom-select${isOpen ? " is-open" : ""}"
+          data-select-root="${escapeHtml(selectKey)}"
+          data-select-field="${escapeHtml(safeField)}"
+          data-select-owner="${escapeHtml(safeOwner)}"
+        >
           <input type="hidden" name="${escapeHtml(safeField)}" value="${escapeHtml(selected)}" />
-          <button
-            class="custom-select-trigger"
-            type="button"
-            data-action="toggle-debater-select"
-            data-select-field="${escapeHtml(safeField)}"
-            aria-haspopup="listbox"
-            aria-expanded="${isOpen ? "true" : "false"}"
-          >
-            <span class="custom-select-value${selectedName ? "" : " is-placeholder"}">
-              ${escapeHtml(selectedName || "Select debater")}
-            </span>
-            <span class="custom-select-caret" aria-hidden="true"></span>
-          </button>
+          <div class="custom-select-trigger custom-select-input-row">
+            <input
+              class="custom-select-input${inputValue ? "" : " is-placeholder"}"
+              id="custom-select-input-${escapeHtml(selectKey)}"
+              type="text"
+              value="${escapeHtml(inputValue)}"
+              data-select-input="${escapeHtml(safeField)}"
+              data-select-field="${escapeHtml(safeField)}"
+              data-select-owner="${escapeHtml(safeOwner)}"
+              data-select-key="${escapeHtml(selectKey)}"
+              autocomplete="off"
+              autocapitalize="words"
+              spellcheck="false"
+              placeholder="Select debater"
+              aria-haspopup="listbox"
+              aria-expanded="${isOpen ? "true" : "false"}"
+            />
+            <button
+              class="custom-select-toggle"
+              type="button"
+              data-action="toggle-debater-select"
+              data-select-key="${escapeHtml(selectKey)}"
+              aria-label="Toggle debater list"
+              tabindex="-1"
+            >
+              <span class="custom-select-caret" aria-hidden="true"></span>
+            </button>
+          </div>
           <div class="custom-select-menu${isOpen ? "" : " hidden"}" role="listbox" aria-label="${escapeHtml(label)}">
-            <div class="custom-select-search-shell">
-              <input
-                class="custom-select-search"
-                id="custom-select-search-${escapeHtml(safeField)}"
-                type="text"
-                data-select-owner="${escapeHtml(safeOwner)}"
-                data-select-filter="${escapeHtml(safeField)}"
-                autocomplete="off"
-                autocapitalize="off"
-                spellcheck="false"
-                placeholder="Type username"
-              />
-            </div>
             <div class="custom-select-options">
               ${options.join("")}
               <button
@@ -4986,20 +5861,24 @@
     `;
   }
 
-  function setCustomSelectOpenState(field, open) {
-    const root = el.mainContent?.querySelector(`[data-select-root="${field}"]`);
+  function setCustomSelectOpenState(selectKey, open) {
+    const root = el.mainContent?.querySelector(`[data-select-root="${selectKey}"]`);
     if (!root) return;
 
     root.classList.toggle("is-open", open);
     root.querySelector(".custom-select-menu")?.classList.toggle("hidden", !open);
-    root.querySelector(".custom-select-trigger")?.setAttribute("aria-expanded", open ? "true" : "false");
-
-    const searchInput = root.querySelector(".custom-select-search");
-    if (searchInput instanceof HTMLInputElement) {
-      searchInput.value = "";
-      syncDebaterSelectFilter(field);
+    const visibleInput = root.querySelector(".custom-select-input");
+    if (visibleInput instanceof HTMLInputElement) {
+      visibleInput.setAttribute("aria-expanded", open ? "true" : "false");
+      syncDebaterSelectFilter(selectKey);
       if (open) {
-        window.requestAnimationFrame(() => searchInput.focus());
+        window.requestAnimationFrame(() => {
+          visibleInput.focus();
+          const currentLength = visibleInput.value.length;
+          try {
+            visibleInput.setSelectionRange(currentLength, currentLength);
+          } catch (_) {}
+        });
       }
     }
   }
@@ -5010,18 +5889,18 @@
     state.openSelectKey = "";
   }
 
-  function toggleOpenSelect(field) {
-    const safeField = String(field || "").trim();
-    if (!safeField) return;
+  function toggleOpenSelect(selectKey) {
+    const safeSelectKey = String(selectKey || "").trim();
+    if (!safeSelectKey) return;
 
-    if (state.openSelectKey === safeField) {
+    if (state.openSelectKey === safeSelectKey) {
       closeOpenSelect();
       return;
     }
 
     closeOpenSelect();
-    state.openSelectKey = safeField;
-    setCustomSelectOpenState(safeField, true);
+    state.openSelectKey = safeSelectKey;
+    setCustomSelectOpenState(safeSelectKey, true);
   }
 
   async function handleLoginSubmit(event) {
@@ -5239,11 +6118,28 @@
 
     const currentRole = getUserRoleForUid(safeUid);
     const nextRole = currentRole === "admin" ? "user" : "admin";
+    openAccountModal("role", {
+      targetUid: safeUid,
+      targetName: getNameForUid(safeUid, "debater"),
+      currentRole,
+      nextRole
+    });
+  }
+
+  async function submitAdminManagedUserStatus(targetUid, nextRoleInput) {
+    const safeUid = String(targetUid || "").trim();
+    const nextRole = normalizeUserRole(nextRoleInput, "");
+    if (!safeUid || !nextRole || !currentIsAdmin() || !state.user) return;
+
+    const currentRole = getUserRoleForUid(safeUid);
+    if (currentRole === nextRole) {
+      closeAccountModal();
+      return;
+    }
+
     const safeName = formatDisplayName(getNameForUid(safeUid, "debater"), "That User") || "That User";
-    const confirmed = window.confirm(
-      `Change ${safeName} from ${currentRole === "admin" ? "Admin" : "User"} to ${nextRole === "admin" ? "Admin" : "User"}?`
-    );
-    if (!confirmed) return;
+    state.accountModalBusy = true;
+    syncAccountModalUi();
 
     state.actionBusyKey = `${safeUid}:role`;
     renderApp({ preserveScroll: true });
@@ -5283,11 +6179,18 @@
           : [...state.userProfiles, { uid: safeUid, role: nextRole }];
       }
 
+      closeAccountModal(true);
       showToast(`${safeName} is now ${nextRole === "admin" ? "an admin" : "a user"}.`, "success");
     } catch (error) {
       console.warn("Could not change user role", error);
-      showToast("Could not change that status right now.", "error");
+      const message = isFirestorePermissionDenied(error)
+        ? getAdminRulesDeployMessage("changing user status")
+        : "Could not change that status right now.";
+      setHint(el.accountModalHint, message, "error");
+      showToast(message, "error");
     } finally {
+      state.accountModalBusy = false;
+      syncAccountModalUi();
       state.actionBusyKey = "";
       renderApp({ preserveScroll: true });
     }
@@ -5332,14 +6235,9 @@
     }
   }
 
-  async function handleProfilePictureInputChange(event) {
-    const file = event.target?.files?.[0] || null;
-    if (!file) return;
-
+  async function uploadProfilePictureDataUrl(dataUrl) {
     if (!state.user) {
-      showToast("Sign in to change your profile picture.", "error");
-      event.target.value = "";
-      return;
+      throw new Error("Sign in to change your profile picture.");
     }
 
     const viewerUid = String(state.user.uid || "").trim();
@@ -5350,11 +6248,7 @@
     const targetDisplayName = formatDisplayName(targetName, "Debater");
     const isOwnTarget = targetUid === viewerUid;
     if (!isOwnTarget && !currentIsAdmin()) {
-      showToast("Only admins can change another user's profile picture.", "error");
-      event.target.value = "";
-      state.profilePictureTargetUid = "";
-      state.profilePictureTargetName = "";
-      return;
+      throw new Error("Only admins can change another user's profile picture.");
     }
 
     state.profilePictureBusy = true;
@@ -5364,8 +6258,6 @@
     }
 
     try {
-      const dataUrl = await encodeProfileAvatarFromFile(file);
-
       if (isPreviewMode()) {
         if (isOwnTarget) {
           state.selfProfile = {
@@ -5422,20 +6314,61 @@
 
       renderApp({ preserveScroll: true });
       showToast(isOwnTarget ? "Profile picture updated." : `${targetDisplayName} profile picture updated.`, "success");
-    } catch (error) {
-      console.warn("Profile picture update failed", error);
-      showToast(String(error?.message || `Could not update ${isOwnTarget ? "your" : `${targetDisplayName}'s`} profile picture.`), "error");
     } finally {
       state.profilePictureBusy = false;
-      state.profilePictureTargetUid = "";
-      state.profilePictureTargetName = "";
-      if (el.profilePictureInput) {
-        el.profilePictureInput.value = "";
-      }
       if (isOwnTarget && el.menuChangeProfilePictureBtn) {
         el.menuChangeProfilePictureBtn.disabled = false;
         el.menuChangeProfilePictureBtn.textContent = "Change Profile Picture";
       }
+    }
+  }
+
+  async function handleProfilePictureInputChange(event) {
+    const file = event.target?.files?.[0] || null;
+    if (!file) return;
+
+    try {
+      await openAvatarCropModal(file);
+    } catch (error) {
+      console.warn("Could not open avatar cropper", error);
+      showToast(String(error?.message || "Could not load that image."), "error");
+      state.profilePictureTargetUid = "";
+      state.profilePictureTargetName = "";
+    } finally {
+      if (event.target) {
+        event.target.value = "";
+      }
+    }
+  }
+
+  async function submitAvatarCrop() {
+    if (!state.avatarCropOpen || state.avatarCropBusy || !state.avatarCropFile) return;
+
+    const cropRect = getAvatarCropSourceRect();
+    state.avatarCropBusy = true;
+    syncAvatarCropModalUi();
+
+    try {
+      const dataUrl = await encodeProfileAvatarFromFile(state.avatarCropFile, cropRect);
+      await uploadProfilePictureDataUrl(dataUrl);
+      closeAvatarCropModal(true);
+    } catch (error) {
+      console.warn("Could not save avatar crop", error);
+      const viewerUid = String(state.user?.uid || "").trim();
+      const targetUid = String(state.profilePictureTargetUid || viewerUid).trim();
+      const isOwnTarget = targetUid === viewerUid;
+      const targetName =
+        normalizeUsername(state.profilePictureTargetName || getNameForUid(targetUid, isOwnTarget ? state.username || "debater" : "debater")) ||
+        "debater";
+      const targetDisplayName = formatDisplayName(targetName, "Debater");
+      const message =
+        !isOwnTarget && isFirestorePermissionDenied(error)
+          ? getAdminRulesDeployMessage("changing other users' profile pictures")
+          : String(error?.message || `Could not update ${isOwnTarget ? "your" : `${targetDisplayName}'s`} profile picture.`);
+      showToast(message, "error");
+    } finally {
+      state.avatarCropBusy = false;
+      syncAvatarCropModalUi();
     }
   }
 
@@ -5871,7 +6804,11 @@
       const message = String(error?.message || "");
       setHint(
         el.accountModalHint,
-        message.includes("USERNAME_TAKEN") ? "That username is already taken." : "Could not change that username.",
+        message.includes("USERNAME_TAKEN")
+          ? "That username is already taken."
+          : isFirestorePermissionDenied(error)
+            ? getAdminRulesDeployMessage("changing other users' usernames")
+            : "Could not change that username.",
         "error"
       );
     } finally {
@@ -6059,6 +6996,11 @@
         String(formData.get("nextPassword") || ""),
         String(formData.get("confirmPassword") || "")
       );
+      return;
+    }
+
+    if (state.accountModalType === "role") {
+      await submitAdminManagedUserStatus(state.accountModalTargetUid, state.accountModalRoleNext);
     }
   }
 
@@ -6150,8 +7092,8 @@
 
     const formData = new FormData(event.target);
     const topic = String(formData.get("topic") || "").trim();
-    const debaterASelection = String(formData.get("debaterAUid") || "").trim();
-    const debaterBUSelection = String(formData.get("debaterBUid") || "").trim();
+    const debaterASelection = getDraftDebaterSelectionValue("schedule", "debaterAUid");
+    const debaterBUSelection = getDraftDebaterSelectionValue("schedule", "debaterBUid");
     const category = normalizeDebateCategory(formData.get("category"), "");
     const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
     const moderator = String(formData.get("moderator") || "").trim();
@@ -6268,7 +7210,10 @@
       setPage("dashboard");
     } catch (error) {
       console.warn("Could not schedule debate", error);
-      showToast("Could not schedule that debate right now.", "error");
+      const message = isFirestorePermissionDenied(error)
+        ? getAdminRulesDeployMessage("scheduling debates")
+        : "Could not schedule that debate right now.";
+      showToast(message, "error");
     } finally {
       state.scheduleSaving = false;
       renderApp();
@@ -6277,17 +7222,21 @@
 
   async function handleLazyDebateSubmit(event) {
     event.preventDefault();
-    if (!currentIsAdmin() || !state.user || state.adminLogSaving) return;
+    if (!state.user || state.adminLogSaving) return;
 
     const formData = new FormData(event.target);
+    const submittedByAdmin = currentIsAdmin();
     const topic = String(formData.get("topic") || "").trim();
-    const debaterASelection = String(formData.get("debaterAUid") || "").trim();
-    const debaterBUSelection = String(formData.get("debaterBUid") || "").trim();
+    const debaterASelection = getDraftDebaterSelectionValue("lazy", "debaterAUid");
+    const debaterBUSelection = getDraftDebaterSelectionValue("lazy", "debaterBUid");
     const category = normalizeDebateCategory(formData.get("category"), "");
     const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
     const moderator = String(formData.get("moderator") || "").trim();
     const description = String(formData.get("description") || "").trim();
     const videoUrl = String(formData.get("videoUrl") || "").trim();
+    const videoMode = normalizeVideoClipMode(formData.get("videoMode"));
+    const videoClipStart = String(formData.get("videoClipStart") || "").trim();
+    const videoClipEnd = String(formData.get("videoClipEnd") || "").trim();
     const result = String(formData.get("result") || state.lazyDebateDraft.result || "a").trim();
 
     if (!topic) {
@@ -6333,22 +7282,27 @@
       const debaterAName = normalizeUsername(debaterAIdentity.username || "debater") || "debater";
       const debaterBName = normalizeUsername(debaterBIdentity.username || "debater") || "debater";
       const now = new Date();
+      const actorName = state.username || (submittedByAdmin ? "admin" : "member");
       const videoPayload = buildDebateVideoPayload(videoUrl, {
+        mode: videoMode,
+        start: videoClipStart,
+        end: videoClipEnd,
         addedAt: now,
         addedByUid: String(state.user.uid || "").trim(),
-        addedByName: state.username || "admin"
+        addedByName: actorName
       });
 
       if (!debaterAUid || !debaterBUid || debaterAUid === debaterBUid) {
         throw new Error("INVALID_DEBATERS");
       }
       if (!videoPayload) {
-        showToast("Use a valid YouTube link.", "error");
+        showToast("Use a valid YouTube link and clip range.", "error");
         return;
       }
 
       const winnerUid = result === "a" ? debaterAUid : result === "b" ? debaterBUid : "";
       const winnerName = result === "a" ? debaterAName : result === "b" ? debaterBName : "";
+      const reviewStatus = submittedByAdmin ? "resolved" : "awaiting_review";
 
       if (isPreviewMode()) {
         state.debates = [
@@ -6364,15 +7318,15 @@
             scheduledFor: scheduledDate,
             moderator,
             description,
-            status: "resolved",
+            status: reviewStatus,
             result,
             winnerUid,
             winnerName,
             createdByUid: String(state.user.uid || "").trim(),
-            createdByName: state.username || "admin",
-            claimedByUid: String(state.user.uid || "").trim(),
-            claimedByName: state.username || "admin",
-            claimedAt: now,
+            createdByName: actorName,
+            claimedByUid: submittedByAdmin ? String(state.user.uid || "").trim() : "",
+            claimedByName: submittedByAdmin ? actorName : "",
+            claimedAt: submittedByAdmin ? now : null,
             createdAt: now,
             updatedAt: now,
             comments: [],
@@ -6381,7 +7335,7 @@
         ];
 
         state.lazyDebateDraft = makeDefaultLazyDebateDraft();
-        showToast("Debate logged.", "success");
+        showToast(submittedByAdmin ? "Debate logged." : "Debate submitted for admin review.", "success");
         renderApp({ preserveScroll: true });
         return;
       }
@@ -6396,29 +7350,36 @@
         scheduledFor: firebase.firestore.Timestamp.fromDate(scheduledDate),
         moderator,
         description,
-        status: "resolved",
+        status: reviewStatus,
         result,
         winnerUid,
         winnerName,
         createdByUid: String(state.user.uid || "").trim(),
-        createdByName: state.username || "admin",
-        claimedByUid: String(state.user.uid || "").trim(),
-        claimedByName: state.username || "admin",
-        claimedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdByName: actorName,
+        claimedByUid: submittedByAdmin ? String(state.user.uid || "").trim() : "",
+        claimedByName: submittedByAdmin ? actorName : "",
+        claimedAt: submittedByAdmin ? firebase.firestore.FieldValue.serverTimestamp() : null,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         ...buildDebateVideoPayload(videoUrl, {
           addedAt: firebase.firestore.FieldValue.serverTimestamp(),
           addedByUid: String(state.user.uid || "").trim(),
-          addedByName: state.username || "admin"
+          addedByName: actorName
         })
       });
 
       state.lazyDebateDraft = makeDefaultLazyDebateDraft();
-      showToast("Debate logged.", "success");
+      showToast(submittedByAdmin ? "Debate logged." : "Debate submitted for admin review.", "success");
     } catch (error) {
       console.warn("Could not log debate", error);
-      showToast("Could not log that debate right now.", "error");
+      const message = isFirestorePermissionDenied(error)
+        ? submittedByAdmin
+          ? getAdminRulesDeployMessage("logging debates")
+          : "Could not submit that debate. Publish the latest Firestore rules, then try again."
+        : submittedByAdmin
+          ? "Could not log that debate right now."
+          : "Could not submit that debate right now.";
+      showToast(message, "error");
     } finally {
       state.adminLogSaving = false;
       renderApp({ preserveScroll: true });
@@ -6484,6 +7445,9 @@
     const formData = new FormData(event.target);
     const debateId = String(formData.get("debateId") || "").trim();
     const videoUrl = String(formData.get("videoUrl") || "").trim();
+    const videoMode = normalizeVideoClipMode(formData.get("videoMode"));
+    const videoClipStart = String(formData.get("videoClipStart") || "").trim();
+    const videoClipEnd = String(formData.get("videoClipEnd") || "").trim();
     const debate = state.debates.find((entry) => entry.id === debateId);
 
     if (!debate || !canEditDebateVideo(debate)) {
@@ -6491,9 +7455,16 @@
       return;
     }
 
-    const embedUrl = videoUrl ? getYouTubeEmbedUrl(videoUrl) : "";
-    if (videoUrl && !embedUrl) {
-      showToast("Use a valid YouTube link.", "error");
+    const videoPayload = buildDebateVideoPayload(videoUrl, {
+      mode: videoMode,
+      start: videoClipStart,
+      end: videoClipEnd,
+      addedAt: Date.now(),
+      addedByUid: String(state.user?.uid || "").trim(),
+      addedByName: state.username || "member"
+    });
+    if (!videoPayload) {
+      showToast("Use a valid YouTube link and clip range.", "error");
       return;
     }
 
@@ -6501,13 +7472,7 @@
     renderApp({ preserveScroll: true });
 
     try {
-      const payload = {
-        videoUrl,
-        videoEmbedUrl: embedUrl,
-        videoAddedAt: videoUrl ? Date.now() : null,
-        videoAddedByUid: videoUrl ? String(state.user.uid || "").trim() : "",
-        videoAddedByName: videoUrl ? state.username || "member" : ""
-      };
+      const payload = videoPayload;
 
       if (isPreviewMode()) {
         state.debates = state.debates.map((entry) => {
@@ -6545,22 +7510,125 @@
     return input instanceof HTMLInputElement ? String(input.value || "").trim() : "";
   }
 
+  function getResolveVideoSettings(debateId) {
+    const safeDebateId = String(debateId || "").trim();
+    if (!safeDebateId) {
+      return {
+        videoUrl: "",
+        videoMode: "full",
+        videoClipStart: "",
+        videoClipEnd: ""
+      };
+    }
+
+    const modeInput = el.mainContent?.querySelector(
+      `[data-resolve-video-mode="${safeDebateId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+    );
+    const startInput = el.mainContent?.querySelector(
+      `[data-resolve-video-start="${safeDebateId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+    );
+    const endInput = el.mainContent?.querySelector(
+      `[data-resolve-video-end="${safeDebateId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+    );
+
+    return {
+      videoUrl: getResolveVideoInputValue(safeDebateId),
+      videoMode: modeInput instanceof HTMLSelectElement ? normalizeVideoClipMode(modeInput.value) : "full",
+      videoClipStart: startInput instanceof HTMLInputElement ? String(startInput.value || "").trim() : "",
+      videoClipEnd: endInput instanceof HTMLInputElement ? String(endInput.value || "").trim() : ""
+    };
+  }
+
+  async function reviewSubmittedDebate(debateId, outcome) {
+    if (!currentIsAdmin() || !state.user || !debateId || !["accept", "decline"].includes(String(outcome || ""))) return;
+
+    const debate = state.debates.find((entry) => entry.id === debateId);
+    if (!isDebateAwaitingReview(debate)) return;
+
+    state.actionBusyKey = `${debateId}:review:${outcome}`;
+    renderApp({ preserveScroll: true });
+
+    try {
+      if (outcome === "decline") {
+        if (isPreviewMode()) {
+          state.debates = state.debates.filter((entry) => entry.id !== debateId);
+        } else {
+          await db.collection("debates").doc(debateId).delete();
+        }
+        showToast("Debate submission declined.", "success");
+        return;
+      }
+
+      const winnerUid =
+        debate.result === "a" ? String(debate.debaterAUid || "").trim() : debate.result === "b" ? String(debate.debaterBUid || "").trim() : "";
+      const winnerName =
+        debate.result === "a"
+          ? normalizeUsername(debate.debaterAName || "debater") || "debater"
+          : debate.result === "b"
+            ? normalizeUsername(debate.debaterBName || "debater") || "debater"
+            : "";
+
+      if (isPreviewMode()) {
+        state.debates = state.debates.map((entry) => {
+          if (entry.id !== debateId) return entry;
+          return {
+            ...entry,
+            status: "resolved",
+            winnerUid,
+            winnerName,
+            claimedByUid: String(state.user.uid || "").trim(),
+            claimedByName: state.username || "admin",
+            claimedAt: new Date(),
+            updatedAt: new Date()
+          };
+        });
+      } else {
+        await db.collection("debates").doc(debateId).update({
+          status: "resolved",
+          winnerUid,
+          winnerName,
+          claimedByUid: String(state.user.uid || "").trim(),
+          claimedByName: state.username || "admin",
+          claimedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      showToast("Debate approved.", "success");
+    } catch (error) {
+      console.warn("Could not review submitted debate", error);
+      const message = isFirestorePermissionDenied(error)
+        ? getAdminRulesDeployMessage("reviewing submitted debates")
+        : "Could not review that debate right now.";
+      showToast(message, "error");
+    } finally {
+      state.actionBusyKey = "";
+      renderApp({ preserveScroll: true });
+    }
+  }
+
   async function claimDebateResult(debateId, outcome, videoUrl = "") {
     if (!currentIsAdmin() || !state.user || !debateId || !outcome) return;
     const debate = state.debates.find((entry) => entry.id === debateId);
     if (!debate) return;
 
-    const safeVideoUrl = String(videoUrl || "").trim();
+    const resolveVideo = typeof videoUrl === "object" && videoUrl
+      ? videoUrl
+      : { videoUrl };
+    const safeVideoUrl = String(resolveVideo.videoUrl || "").trim();
     const videoPayload =
       outcome === "reopen"
         ? null
         : buildDebateVideoPayload(safeVideoUrl, {
+            mode: resolveVideo.videoMode,
+            start: resolveVideo.videoClipStart,
+            end: resolveVideo.videoClipEnd,
             addedAt: firebase.firestore.FieldValue.serverTimestamp(),
             addedByUid: String(state.user.uid || "").trim(),
             addedByName: state.username || "admin"
           });
     if (outcome !== "reopen" && !videoPayload) {
-      showToast("Use a valid YouTube link.", "error");
+      showToast("Use a valid YouTube link and clip range.", "error");
       return;
     }
 
@@ -6608,7 +7676,10 @@
       showToast(outcome === "reopen" ? "Debate reopened." : "Result claimed.", "success");
     } catch (error) {
       console.warn("Could not claim result", error);
-      showToast("Could not update that result right now.", "error");
+      const message = isFirestorePermissionDenied(error)
+        ? getAdminRulesDeployMessage("resolving debates")
+        : "Could not update that result right now.";
+      showToast(message, "error");
     } finally {
       state.actionBusyKey = "";
       renderApp();
@@ -6619,6 +7690,7 @@
     const target = event.target;
     const clickedInsideSelect = target.closest("[data-select-root]");
     const clickedInsideSearch = target.closest("#search-shell");
+    const clickedSelectInput = target.closest("[data-select-input]");
 
     if (state.userMenuOpen && !target.closest("#user-menu")) {
       closeUserMenu();
@@ -6632,9 +7704,19 @@
       closeOpenSelect();
     }
 
+    if (clickedSelectInput instanceof HTMLInputElement) {
+      const selectKey = String(clickedSelectInput.getAttribute("data-select-key") || "").trim();
+      if (selectKey && state.openSelectKey !== selectKey) {
+        toggleOpenSelect(selectKey);
+      }
+    }
+
     const pageLink = target.closest("[data-page-link]");
     if (pageLink) {
       event.preventDefault();
+      if (pageLink.classList.contains("is-disabled") || pageLink.getAttribute("aria-disabled") === "true") {
+        return;
+      }
       const page = pageLink.getAttribute("data-page-link");
       if (page) {
         setPage(page);
@@ -6705,6 +7787,13 @@
       return;
     }
 
+    if (action === "open-log-debates") {
+      event.preventDefault();
+      state.scheduleSection = "log";
+      setPage("schedule");
+      return;
+    }
+
     if (action === "mobile-open-own-profile") {
       event.preventDefault();
       openProfile(String(state.user?.uid || "").trim());
@@ -6760,14 +7849,23 @@
     if (action === "claim-result") {
       event.preventDefault();
       const debateId = actionButton.getAttribute("data-debate-id");
-      claimDebateResult(debateId, actionButton.getAttribute("data-outcome"), getResolveVideoInputValue(debateId));
+      claimDebateResult(debateId, actionButton.getAttribute("data-outcome"), getResolveVideoSettings(debateId));
+      return;
+    }
+
+    if (action === "review-submitted-debate") {
+      event.preventDefault();
+      reviewSubmittedDebate(
+        actionButton.getAttribute("data-debate-id"),
+        actionButton.getAttribute("data-outcome")
+      );
       return;
     }
 
     if (action === "toggle-debater-select") {
       event.preventDefault();
-      const field = String(actionButton.getAttribute("data-select-field") || "").trim();
-      toggleOpenSelect(field);
+      const selectKey = String(actionButton.getAttribute("data-select-key") || "").trim();
+      toggleOpenSelect(selectKey);
       return;
     }
 
@@ -6784,7 +7882,7 @@
       const owner = String(actionButton.getAttribute("data-select-owner") || "schedule").trim();
       const value = String(actionButton.getAttribute("data-value") || "").trim();
       if (!field) return;
-      setDraftField(owner, field, value);
+      setDebaterDraftSelection(owner, field, value, value ? formatDisplayName(getNameForUid(value, "debater"), "Debater") : "");
       state.openSelectKey = "";
       if (!syncDraftFormUi(owner)) {
         renderApp({ preserveScroll: true });
@@ -6810,7 +7908,7 @@
       const owner = String(actionButton.getAttribute("data-select-owner") || "schedule").trim();
       const username = normalizeUsername(actionButton.getAttribute("data-value") || "");
       if (!field || !isValidUsername(username)) return;
-      setDraftField(owner, field, makePlaceholderUid(username));
+      setDebaterDraftSelection(owner, field, makePlaceholderUid(username), formatDisplayName(username, "Debater"));
       state.openSelectKey = "";
       if (!syncDraftFormUi(owner)) {
         renderApp({ preserveScroll: true });
@@ -6868,6 +7966,23 @@
     if (event.key === "Escape" && state.accountModalOpen) {
       event.preventDefault();
       closeAccountModal();
+      return;
+    }
+
+    if (event.key === "Escape" && state.avatarCropOpen) {
+      event.preventDefault();
+      closeAvatarCropModal();
+    }
+  }
+
+  function handleMainFocusIn(event) {
+    if (!(event.target instanceof HTMLInputElement) || !event.target.hasAttribute("data-select-input")) {
+      return;
+    }
+
+    const selectKey = String(event.target.getAttribute("data-select-key") || "").trim();
+    if (selectKey && state.openSelectKey !== selectKey) {
+      toggleOpenSelect(selectKey);
     }
   }
 
@@ -6892,10 +8007,19 @@
       return;
     }
 
-    const selectFilterField = event.target.getAttribute("data-select-filter");
-    if (selectFilterField) {
-      syncUsernameInputValue(event.target);
-      syncDebaterSelectFilter(selectFilterField);
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-select-input")) {
+      const field = String(event.target.getAttribute("data-select-field") || "").trim();
+      const owner = String(event.target.getAttribute("data-select-owner") || "schedule").trim();
+      const selectKey = String(event.target.getAttribute("data-select-key") || "").trim();
+      setDebaterDraftQuery(owner, field, event.target.value || "");
+      if (owner === "lazy") {
+        syncLazyResultUi();
+      }
+      if (selectKey && state.openSelectKey !== selectKey) {
+        toggleOpenSelect(selectKey);
+      } else if (selectKey) {
+        syncDebaterSelectFilter(selectKey);
+      }
       return;
     }
 
@@ -6919,11 +8043,17 @@
       return;
     }
 
-    const selectFilterField = event.target.getAttribute("data-select-filter");
-    if (selectFilterField) {
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-select-input")) {
+      const selectKey = String(event.target.getAttribute("data-select-key") || "").trim();
       if (event.key === "Escape") {
         event.preventDefault();
         closeOpenSelect();
+        return;
+      }
+
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && selectKey && state.openSelectKey !== selectKey) {
+        event.preventDefault();
+        toggleOpenSelect(selectKey);
         return;
       }
 
@@ -6975,6 +8105,10 @@
   }
 
   function handleWindowResize() {
+    if (state.avatarCropOpen) {
+      syncAvatarCropModalUi();
+    }
+
     const nextMobile = isMobileViewport();
     if (nextMobile !== state.isMobileViewport) {
       state.isMobileViewport = nextMobile;
@@ -7008,6 +8142,21 @@
     el.menuChangePasswordBtn?.addEventListener("click", changePassword);
     el.menuLogOutBtn?.addEventListener("click", signOutCurrentUser);
     el.profilePictureInput?.addEventListener("change", handleProfilePictureInputChange);
+    el.avatarCropZoomInput?.addEventListener("input", (event) => {
+      setAvatarCropZoom(event.target?.value);
+    });
+    el.avatarCropCancelBtn?.addEventListener("click", () => closeAvatarCropModal());
+    el.avatarCropCloseBtn?.addEventListener("click", () => closeAvatarCropModal());
+    el.avatarCropSaveBtn?.addEventListener("click", submitAvatarCrop);
+    el.avatarCropShell?.addEventListener("click", (event) => {
+      if (event.target === el.avatarCropShell) {
+        closeAvatarCropModal();
+      }
+    });
+    el.avatarCropViewport?.addEventListener("pointerdown", startAvatarCropDrag);
+    el.avatarCropViewport?.addEventListener("pointermove", handleAvatarCropPointerMove);
+    el.avatarCropViewport?.addEventListener("pointerup", finishAvatarCropDrag);
+    el.avatarCropViewport?.addEventListener("pointercancel", finishAvatarCropDrag);
     el.accountModalForm?.addEventListener("submit", handleAccountModalSubmit);
     el.accountModalForm?.addEventListener("input", (event) => {
       if (event.target instanceof HTMLInputElement && event.target.name === "nextUsername") {
@@ -7099,6 +8248,7 @@
     });
     el.mainContent?.addEventListener("input", handleMainInput);
     el.mainContent?.addEventListener("change", handleMainInput);
+    el.mainContent?.addEventListener("focusin", handleMainFocusIn);
     el.mainContent?.addEventListener("keydown", handleMainKeydown);
     document.addEventListener("click", handleDocumentClick);
     document.addEventListener("keydown", handleDocumentKeydown);

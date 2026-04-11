@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>DH</title>
+    <title>DialecticHub</title>
     <meta name="theme-color" content="#0b0e12" />
-    <meta name="application-name" content="DH" />
-    <meta name="apple-mobile-web-app-title" content="DH" />
+    <meta name="application-name" content="DialecticHub" />
+    <meta name="apple-mobile-web-app-title" content="DialecticHub" />
     <meta name="msapplication-TileColor" content="#0b0e12" />
     <meta
       name="description"
@@ -38,7 +38,7 @@
           <span></span>
         </div>
         <div class="auth-loading-copy">
-          <span class="auth-loading-brand brand-wordmark" aria-label="DH">
+          <span class="auth-loading-brand brand-wordmark" aria-label="DialecticHub">
             <span class="brand-wordmark-base">D</span>
             <span class="brand-wordmark-block">H</span>
           </span>
@@ -51,7 +51,7 @@
       <div class="auth-shell">
         <section class="auth-card">
           <div class="auth-hero">
-            <span class="auth-brand brand-wordmark" aria-label="DH">
+            <span class="auth-brand brand-wordmark" aria-label="DialecticHub">
               <span class="brand-wordmark-base">D</span>
               <span class="brand-wordmark-block">H</span>
             </span>
@@ -218,7 +218,7 @@
     <div class="hub-shell hidden" id="hub-shell">
       <header class="topbar">
         <div class="brand-mark">
-          <img class="brand-logo" src="assets/dialectic-mark.svg" alt="DH logo" />
+          <img class="brand-logo" src="assets/dialectic-mark.svg" alt="DialecticHub logo" />
           <div class="brand-copy">
             <div class="brand-row">
               <h1>DialecticHub</h1>
@@ -282,7 +282,7 @@
 
       <div class="workspace">
         <aside class="sidebar">
-          <nav class="sidebar-nav" aria-label="DH navigation">
+          <nav class="sidebar-nav" aria-label="DialecticHub navigation">
             <a class="nav-btn is-active" id="primary-nav-link" data-page-link="dashboard" href="./">Profile</a>
             <a class="nav-btn" data-page-link="schedule" href="./?page=schedule">Schedule</a>
             <a class="nav-btn" data-page-link="archive" href="./?page=archive">Archive</a>
@@ -313,6 +313,29 @@
             <button class="primary-btn" id="account-modal-submit-btn" type="submit">Save</button>
           </div>
         </form>
+      </section>
+    </div>
+
+    <div class="account-modal-shell avatar-crop-shell hidden" id="avatar-crop-shell" aria-hidden="true">
+      <section class="account-modal avatar-crop-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-crop-title">
+        <div class="account-modal-head">
+          <button class="account-modal-close" id="avatar-crop-close-btn" type="button" aria-label="Close image crop dialog">
+            &times;
+          </button>
+        </div>
+        <h2 class="account-modal-title" id="avatar-crop-title">Adjust Profile Picture</h2>
+        <p class="avatar-crop-copy">Drag the photo to center it inside the circle, then zoom if needed.</p>
+        <div class="avatar-crop-viewport" id="avatar-crop-viewport">
+          <img class="avatar-crop-image" id="avatar-crop-image" alt="Profile picture crop preview" draggable="false" />
+        </div>
+        <label class="field avatar-crop-zoom-field">
+          <span>Zoom <strong id="avatar-crop-zoom-value">100%</strong></span>
+          <input id="avatar-crop-zoom-input" type="range" min="1" max="3.2" step="0.01" value="1" />
+        </label>
+        <div class="form-actions avatar-crop-actions">
+          <button class="ghost-btn" id="avatar-crop-cancel-btn" type="button">Cancel</button>
+          <button class="primary-btn" id="avatar-crop-save-btn" type="button">Save Picture</button>
+        </div>
       </section>
     </div>
 
