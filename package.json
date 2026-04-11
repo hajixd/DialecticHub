@@ -1,0 +1,14 @@
+{
+  "name": "dialectic-hub",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "start:fixed": "set PORT=3042&& node server.js"
+  }
+}
+

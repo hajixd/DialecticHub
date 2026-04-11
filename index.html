@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DH</title>
+    <meta name="theme-color" content="#0b0e12" />
+    <meta name="application-name" content="DH" />
+    <meta name="apple-mobile-web-app-title" content="DH" />
+    <meta name="msapplication-TileColor" content="#0b0e12" />
+    <meta
+      name="description"
+      content="Schedule debates, settle results, and track the ladder from one clean board."
+    />
+    <link rel="icon" href="assets/dialectic-mark.svg" type="image/svg+xml" />
+    <link rel="icon" href="assets/favicon-16x16.png" sizes="16x16" type="image/png" />
+    <link rel="icon" href="assets/favicon-32x32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body class="booting">
+    <div class="auth-loading-screen" id="auth-loading-screen" aria-live="polite">
+      <div class="auth-loading-mark">
+        <div class="loading-rings" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="auth-loading-copy">
+          <span class="auth-loading-brand brand-wordmark" aria-label="DH">
+            <span class="brand-wordmark-base">D</span>
+            <span class="brand-wordmark-block">H</span>
+          </span>
+          <span class="auth-loading-subline" id="auth-loading-message">Loading the arena</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="auth-screen hidden" id="auth-screen">
+      <div class="auth-shell">
+        <section class="auth-card">
+          <div class="auth-hero">
+            <span class="auth-brand brand-wordmark" aria-label="DH">
+              <span class="brand-wordmark-base">D</span>
+              <span class="brand-wordmark-block">H</span>
+            </span>
+          </div>
+
+          <div class="auth-tabs" role="tablist" aria-label="Account">
+            <button class="tab-btn is-active" id="auth-tab-login" type="button" role="tab" aria-selected="true">
+              Log in
+            </button>
+            <button class="tab-btn" id="auth-tab-create" type="button" role="tab" aria-selected="false">
+              Create account
+            </button>
+          </div>
+
+          <form class="auth-form" id="login-form" autocomplete="on">
+            <label class="field">
+              <span>Username</span>
+              <input
+                id="login-username"
+                type="text"
+                autocomplete="username"
+                autocapitalize="off"
+                placeholder="your_name"
+                required
+              />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input
+                id="login-password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="Password"
+                required
+              />
+            </label>
+            <button class="primary-btn auth-submit" type="submit">Log in</button>
+            <p class="form-hint" id="login-hint"></p>
+          </form>
+
+          <form class="auth-form hidden" id="create-form" autocomplete="on">
+            <label class="field">
+              <span>Username</span>
+              <input
+                id="create-username"
+                type="text"
+                autocomplete="username"
+                autocapitalize="off"
+                placeholder="new_debater"
+                required
+              />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input
+                id="create-password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Password"
+                required
+              />
+            </label>
+            <button class="primary-btn auth-submit" type="submit">Create account</button>
+            <p class="form-hint" id="create-hint"></p>
+          </form>
+        </section>
+      </div>
+    </div>
+
+    <div class="hub-shell hidden" id="hub-shell">
+      <header class="topbar">
+        <div class="brand-mark">
+          <img class="brand-logo" src="assets/dialectic-mark.svg" alt="DH logo" />
+          <div class="brand-copy">
+            <div class="brand-row">
+              <h1 class="brand-wordmark" aria-label="DH">
+                <span class="brand-wordmark-base">D</span>
+                <span class="brand-wordmark-block">H</span>
+              </h1>
+            </div>
+          </div>
+        </div>
+
+        <div class="search-shell" id="search-shell">
+          <label class="search-field" for="top-search-input">
+            <span class="search-label">Search</span>
+            <input
+              id="top-search-input"
+              type="search"
+              placeholder="Topic, debater, moderator..."
+              autocomplete="off"
+              aria-controls="search-popover"
+              aria-expanded="false"
+            />
+            <button class="search-clear hidden" id="clear-search-btn" type="button" aria-label="Clear search">
+              &times;
+            </button>
+          </label>
+          <div class="search-popover hidden" id="search-popover" role="listbox" aria-label="Search suggestions"></div>
+        </div>
+
+        <div class="topbar-meta">
+          <div class="top-stat">
+            <span class="top-stat-value" id="header-ranked-count">0</span>
+            <span class="top-stat-label">rank</span>
+          </div>
+          <div class="user-menu" id="user-menu">
+            <button class="user-pill" id="user-pill" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="avatar-chip" id="user-avatar">D</span>
+              <span class="user-pill-copy">
+                <strong id="user-name">debater</strong>
+              </span>
+            </button>
+            <div class="user-menu-popover hidden" id="user-menu-popover" role="menu" aria-label="Account menu">
+              <button class="user-menu-item" id="menu-profile-btn" type="button" role="menuitem">
+                Profile
+              </button>
+              <button class="user-menu-item" id="menu-theme-btn" type="button" role="menuitem">
+                Light mode
+              </button>
+              <button class="user-menu-item" id="menu-change-username-btn" type="button" role="menuitem">
+                Change Username
+              </button>
+              <button class="user-menu-item" id="menu-change-profile-picture-btn" type="button" role="menuitem">
+                Change Profile Picture
+              </button>
+              <button class="user-menu-item" id="menu-change-password-btn" type="button" role="menuitem">
+                Change Password
+              </button>
+              <button class="user-menu-item danger" id="menu-log-out-btn" type="button" role="menuitem">
+                Log Out
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar">
+          <nav class="sidebar-nav" aria-label="DH navigation">
+            <a class="nav-btn is-active" data-page-link="dashboard" href="./">Profile</a>
+            <a class="nav-btn" data-page-link="schedule" href="./?page=schedule">Schedule</a>
+            <a class="nav-btn" data-page-link="archive" href="./?page=archive">Archive</a>
+            <a class="nav-btn" data-page-link="rankings" href="./?page=rankings">Ladder</a>
+            <a class="nav-btn hidden" id="admin-nav-link" data-page-link="admin" href="./?page=admin">Admin</a>
+          </nav>
+        </aside>
+
+        <div class="board">
+          <main class="main-content" id="main-content" aria-live="polite"></main>
+          <aside class="side-content" id="side-content"></aside>
+        </div>
+      </div>
+    </div>
+
+    <div class="account-modal-shell hidden" id="account-modal-shell" aria-hidden="true">
+      <section class="account-modal" id="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+        <div class="account-modal-head">
+          <span class="panel-label">Account</span>
+          <button class="account-modal-close" id="account-modal-close-btn" type="button" aria-label="Close account dialog">
+            &times;
+          </button>
+        </div>
+        <h2 class="account-modal-title" id="account-modal-title">Account</h2>
+        <p class="account-modal-copy" id="account-modal-copy"></p>
+        <form class="stack-form account-modal-form" id="account-modal-form" autocomplete="off">
+          <div class="account-modal-fields" id="account-modal-fields"></div>
+          <p class="form-hint" id="account-modal-hint"></p>
+          <div class="form-actions account-modal-actions">
+            <button class="ghost-btn" id="account-modal-cancel-btn" type="button">Cancel</button>
+            <button class="primary-btn" id="account-modal-submit-btn" type="submit">Save</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    <input class="hidden" id="profile-picture-input" type="file" accept="image/*" />
+  </body>
+</html>

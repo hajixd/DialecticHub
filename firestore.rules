@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+
+    function adminUidFromUsername() {
+      return exists(/databases/$(database)/documents/usernames/admin)
+        ? get(/databases/$(database)/documents/usernames/admin).data.uid
+        : '';
+    }
+
+    function isAdmin() {
+      return signedIn() && (request.auth.token.admin == true || request.auth.uid == adminUidFromUsername());
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if signedIn()
+        && username.matches('^[a-z0-9_]{3,20}$')
+        && !exists(/databases/$(database)/documents/usernames/$(username))
+        && (
+          (
+            request.resource.data.uid == request.auth.uid
+            && request.resource.data.authHandle is string
+            && request.resource.data.authHandle != ''
+          ) || (
+            request.resource.data.uid == ''
+            && request.resource.data.authHandle is string
+            && request.resource.data.authHandle == ''
+            && request.resource.data.invitedByUid == request.auth.uid
+          )
+        );
+      allow update: if signedIn()
+        && username.matches('^[a-z0-9_]{3,20}$')
+        && resource.data.uid == ''
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.authHandle is string
+        && request.resource.data.authHandle != '';
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == resource.data.uid);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    match /debates/{debateId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.debaterAUid is string
+        && request.resource.data.debaterBUid is string
+        && request.resource.data.debaterAUid != request.resource.data.debaterBUid
+        && request.resource.data.topic is string
+        && (
+          (
+            request.resource.data.status == 'scheduled'
+            && request.resource.data.result == 'pending'
+          ) || (
+            isAdmin()
+            && request.resource.data.status == 'resolved'
+            && (
+              request.resource.data.result == 'a'
+              || request.resource.data.result == 'b'
+              || request.resource.data.result == 'draw'
+            )
+            && request.resource.data.claimedByUid == request.auth.uid
+          )
+        );
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (signedIn()
+        && resource.data.createdByUid == request.auth.uid
+        && resource.data.status == 'scheduled');
+    }
+  }
+}
