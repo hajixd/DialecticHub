@@ -5089,6 +5089,13 @@
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
     const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
+    const resultToneClass = isAwaitingReview
+      ? " is-review"
+      : debate.status === "resolved" && debate.result === "draw"
+        ? " is-draw"
+        : debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A"
+          ? " is-winner"
+          : "";
 
     return `
       <article
