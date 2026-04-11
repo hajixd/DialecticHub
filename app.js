@@ -63,6 +63,7 @@
     selfProfile: null,
     currentPage: getPageFromUrl(),
     profileUid: getProfileUidFromUrl(),
+    profileCategory: "",
     debateId: getDebateIdFromUrl(),
     settingsSection: "root",
     scheduleSection: "new",
@@ -2938,6 +2939,13 @@
     return safeUid === String(debate.debaterAUid || "").trim() || safeUid === String(debate.debaterBUid || "").trim();
   }
 
+  function filterDebatesByCategory(debates, categoryId) {
+    const safeCategory = normalizeRankingsCategory(categoryId);
+    return (Array.isArray(debates) ? debates : []).filter(
+      (debate) => normalizeDebateCategory(debate?.category) === safeCategory
+    );
+  }
+
   function sortLeaderboardRows(rows) {
     return [...rows].sort((left, right) => {
       if (left.isRanked !== right.isRanked) return Number(right.isRanked) - Number(left.isRanked);
@@ -3098,6 +3106,169 @@
     });
   }
 
+  function buildRatingHistoryForUser(debates, options = {}) {
+    const safeUid = String(options.uid || "").trim();
+    const selectedCategory = options.category ? normalizeDebateCategory(options.category) : "";
+    if (!safeUid || !selectedCategory) return [];
+
+    const directoryMap = getDirectoryMap();
+    const players = new Map();
+    const history = [];
+
+    function ensurePlayer(uid, fallbackName) {
+      const playerUid = String(uid || "").trim();
+      if (!playerUid) return null;
+
+      if (!players.has(playerUid)) {
+        players.set(playerUid, {
+          uid: playerUid,
+          name: directoryMap.get(playerUid) || normalizeUsername(fallbackName || "") || "debater",
+          rating: ELO_BASELINE,
+          reached2400: ELO_BASELINE >= FIDE_HIGH_RATING_THRESHOLD,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          debates: 0
+        });
+      }
+
+      const player = players.get(playerUid);
+      const nextName = directoryMap.get(playerUid) || normalizeUsername(fallbackName || "");
+      if (nextName) {
+        player.name = nextName;
+      }
+      return player;
+    }
+
+    const ratedDebates = (Array.isArray(debates) ? debates : [])
+      .filter((debate) => {
+        return (
+          debate.status === "resolved" &&
+          ["a", "b", "draw"].includes(String(debate.result || "")) &&
+          String(debate.debaterAUid || "").trim() &&
+          String(debate.debaterBUid || "").trim() &&
+          normalizeDebateCategory(debate.category) === selectedCategory
+        );
+      })
+      .sort(compareDebatesAscending);
+
+    const ratingPeriods = [];
+    let currentPeriod = null;
+
+    ratedDebates.forEach((debate) => {
+      const debateMillis = getDebateChronologyMillis(debate);
+      const periodKey = getFideRatingPeriodKey(debateMillis);
+
+      if (!currentPeriod || currentPeriod.key !== periodKey) {
+        currentPeriod = { key: periodKey, debates: [] };
+        ratingPeriods.push(currentPeriod);
+      }
+
+      currentPeriod.debates.push({ debate, debateMillis });
+    });
+
+    ratingPeriods.forEach((period) => {
+      const periodSnapshots = new Map();
+      const periodChanges = new Map();
+      let periodEndMillis = 0;
+      let targetPlayedThisPeriod = false;
+
+      function getPeriodSnapshot(player) {
+        if (!player) return null;
+        if (!periodSnapshots.has(player.uid)) {
+          periodSnapshots.set(player.uid, {
+            uid: player.uid,
+            rating: player.rating,
+            debates: player.debates,
+            reached2400: Boolean(player.reached2400)
+          });
+        }
+        return periodSnapshots.get(player.uid);
+      }
+
+      function getPeriodChange(uid) {
+        const playerUid = String(uid || "").trim();
+        if (!periodChanges.has(playerUid)) {
+          periodChanges.set(playerUid, {
+            deltaSum: 0,
+            games: 0
+          });
+        }
+        return periodChanges.get(playerUid);
+      }
+
+      period.debates.forEach(({ debate, debateMillis }) => {
+        const playerA = ensurePlayer(debate.debaterAUid, debate.debaterAName);
+        const playerB = ensurePlayer(debate.debaterBUid, debate.debaterBName);
+        if (!playerA || !playerB) return;
+
+        const snapshotA = getPeriodSnapshot(playerA);
+        const snapshotB = getPeriodSnapshot(playerB);
+        const expectedA = getFideExpectedScore(snapshotA.rating, snapshotB.rating, debateMillis);
+        const expectedB = getFideExpectedScore(snapshotB.rating, snapshotA.rating, debateMillis);
+        const scoreA = debate.result === "a" ? 1 : debate.result === "b" ? 0 : 0.5;
+        const scoreB = 1 - scoreA;
+        const playerAChange = getPeriodChange(playerA.uid);
+        const playerBChange = getPeriodChange(playerB.uid);
+
+        playerAChange.deltaSum += scoreA - expectedA;
+        playerAChange.games += 1;
+        playerBChange.deltaSum += scoreB - expectedB;
+        playerBChange.games += 1;
+        playerA.debates += 1;
+        playerB.debates += 1;
+        periodEndMillis = Math.max(periodEndMillis, debateMillis);
+
+        if (playerA.uid === safeUid || playerB.uid === safeUid) {
+          targetPlayedThisPeriod = true;
+        }
+
+        if (debate.result === "a") {
+          playerA.wins += 1;
+          playerB.losses += 1;
+        } else if (debate.result === "b") {
+          playerB.wins += 1;
+          playerA.losses += 1;
+        } else {
+          playerA.draws += 1;
+          playerB.draws += 1;
+        }
+      });
+
+      periodChanges.forEach((change, uid) => {
+        const player = players.get(uid);
+        const snapshot = periodSnapshots.get(uid);
+        if (!player || !snapshot || !change.games) return;
+
+        const kFactor = getFideKFactor(snapshot, change.games, periodEndMillis);
+        const ratingChange = roundHalfAwayFromZero(change.deltaSum * kFactor);
+
+        player.rating += ratingChange;
+        if (player.rating >= FIDE_HIGH_RATING_THRESHOLD) {
+          player.reached2400 = true;
+        }
+      });
+
+      if (!targetPlayedThisPeriod) return;
+
+      const targetPlayer = players.get(safeUid);
+      if (!targetPlayer) return;
+
+      history.push({
+        at: periodEndMillis,
+        rating: targetPlayer.rating,
+        ratingRounded: roundHalfAwayFromZero(targetPlayer.rating),
+        debates: targetPlayer.debates,
+        wins: targetPlayer.wins,
+        losses: targetPlayer.losses,
+        draws: targetPlayer.draws,
+        isPublishedRating: targetPlayer.debates >= MIN_RANKED_DEBATES
+      });
+    });
+
+    return history;
+  }
+
   function getFallbackPlayerSnapshot(uid, name) {
     return {
       uid: String(uid || "").trim(),
@@ -3168,6 +3339,14 @@
     const profileCategoryRatings = buildCategoryRatingsForUser(activeProfileUid, activeProfileName, leaderboardsByCategory);
     const preferredViewerCategory = getPreferredCategoryRating(viewerCategoryRatings, viewerUid || viewerName);
     const preferredProfileCategory = getPreferredCategoryRating(profileCategoryRatings, activeProfileUid || activeProfileName);
+    const selectedProfileCategoryId = normalizeRankingsCategory(
+      state.profileCategory || preferredProfileCategory?.id || DEBATE_CATEGORIES[0].id
+    );
+    const selectedProfileCategory =
+      getCategoryRatingById(profileCategoryRatings, selectedProfileCategoryId, activeProfileUid || activeProfileName) ||
+      preferredProfileCategory ||
+      profileCategoryRatings[0] ||
+      null;
     const rankingsCategory = normalizeRankingsCategory(state.rankingsCategory || preferredViewerCategory?.id || DEBATE_CATEGORIES[0].id);
     const sideLeaderboardCategory = normalizeRankingsCategory(preferredViewerCategory?.id || getStableCategoryFromSeed(viewerUid || viewerName));
     const leaderboardSearch = state.searchTerm.toLowerCase();
@@ -3186,6 +3365,19 @@
       getFallbackPlayerSnapshot(activeProfileUid, activeProfileName);
     const profileDebatesUpcoming = upcoming.filter((debate) => debateIncludesUser(debate, activeProfileUid));
     const profileDebatesPast = past.filter((debate) => debateIncludesUser(debate, activeProfileUid));
+    const profileDebatesUpcomingFiltered = filterDebatesByCategory(profileDebatesUpcoming, selectedProfileCategory?.id);
+    const profileDebatesPastFiltered = filterDebatesByCategory(profileDebatesPast, selectedProfileCategory?.id);
+    const profileCategorySnapshot = selectedProfileCategory || {
+      ...getFallbackPlayerSnapshot(activeProfileUid, activeProfileName),
+      id: selectedProfileCategoryId,
+      label: getDebateCategoryLabel(selectedProfileCategoryId),
+      rank: 0
+    };
+    const profileCategoryHistory = buildRatingHistoryForUser(allDebates, {
+      uid: activeProfileUid,
+      name: activeProfileName,
+      category: profileCategorySnapshot.id
+    });
     const profileIsCurrentUser = activeProfileUid === viewerUid;
     const selectedDebate = allDebates.find((debate) => debate.id === String(state.debateId || "").trim()) || null;
     const selectedDebateComments = getDebateComments(selectedDebate);
@@ -3221,8 +3413,13 @@
       profileSnapshot,
       profileCategoryRatings,
       preferredProfileCategory,
+      selectedProfileCategory,
+      profileCategorySnapshot,
+      profileCategoryHistory,
       profileDebatesUpcoming,
       profileDebatesPast,
+      profileDebatesUpcomingFiltered,
+      profileDebatesPastFiltered,
       profileIsCurrentUser,
       rankingsCategory,
       rankingsCategoryLabel: getDebateCategoryLabel(rankingsCategory),
@@ -3616,8 +3813,8 @@
 
   function renderMobileDashboardPage(model) {
     const avatarDataUrl = getAvatarDataUrlForUid(model.profileUid || model.profileSnapshot.uid);
-    const bestCategory = model.preferredProfileCategory || model.profileCategoryRatings[0] || null;
-    const bestRankLabel = getCategoryRankLabel(bestCategory);
+    const selectedCategory = model.selectedProfileCategory || model.profileCategoryRatings[0] || null;
+    const categoryRankLabel = getCategoryRankLabel(selectedCategory);
 
     return `
       <section class="page-shell mobile-page">
@@ -3636,21 +3833,24 @@
           </div>
           ${renderCategoryRatingGrid(model.profileCategoryRatings, {
             mobile: true,
-            preferredCategoryId: model.preferredProfileCategory?.id
+            interactive: true,
+            preferredCategoryId: model.preferredProfileCategory?.id,
+            selectedCategoryId: model.selectedProfileCategory?.id
           })}
+          ${renderProfileRatingHistoryPanel(model.selectedProfileCategory, model.profileCategoryHistory, { mobile: true })}
           <div class="mobile-inline-stats">
             <article class="mobile-stat">
               <span class="summary-label">Debates</span>
-              <strong>${model.profileSnapshot.debates}</strong>
+              <strong>${model.profileCategorySnapshot.debates}</strong>
             </article>
             <article class="mobile-stat">
-              <span class="summary-label">Best Rank</span>
-              <strong>${escapeHtml(bestRankLabel)}</strong>
-              <span class="mobile-row-meta">${escapeHtml(bestCategory?.label || "Category")}</span>
+              <span class="summary-label">Rank</span>
+              <strong>${escapeHtml(categoryRankLabel)}</strong>
+              <span class="mobile-row-meta">${escapeHtml(selectedCategory?.label || "Category")}</span>
             </article>
           </div>
           <div class="mobile-record-line">
-            ${renderRecordChips(model.profileSnapshot, { compact: true, labelStyle: "full" })}
+            ${renderRecordChips(model.profileCategorySnapshot, { compact: true, labelStyle: "full" })}
           </div>
         </section>
 
@@ -3659,7 +3859,7 @@
             <h3>Upcoming</h3>
           </div>
           ${renderScrollablePanel(
-            renderMobileDebateList(model.profileDebatesUpcoming, {
+            renderMobileDebateList(model.profileDebatesUpcomingFiltered, {
               emptyTitle: "No upcoming debates"
             }),
             "mobile-profile-scroll"
@@ -3671,7 +3871,7 @@
             <h3>Results</h3>
           </div>
           ${renderScrollablePanel(
-            renderMobileDebateList(model.profileDebatesPast, {
+            renderMobileDebateList(model.profileDebatesPastFiltered, {
               emptyTitle: "No results yet",
               hideStatus: true,
               hideResultPill: true,
@@ -4247,11 +4447,10 @@
   }
 
   function renderDashboardPage(model) {
-    const nextForProfile = model.profileDebatesUpcoming[0] || null;
-    const drawLabel = model.profileSnapshot.draws ? String(model.profileSnapshot.draws) : "0";
+    const drawLabel = model.profileCategorySnapshot.draws ? String(model.profileCategorySnapshot.draws) : "0";
     const avatarDataUrl = getAvatarDataUrlForUid(model.profileUid || model.profileSnapshot.uid);
-    const bestCategory = model.preferredProfileCategory || model.profileCategoryRatings[0] || null;
-    const bestRankLabel = getCategoryRankLabel(bestCategory);
+    const selectedCategory = model.selectedProfileCategory || model.profileCategoryRatings[0] || null;
+    const categoryRankLabel = getCategoryRankLabel(selectedCategory);
 
     return `
       <section class="page-shell">
@@ -4282,25 +4481,28 @@
             }
           </div>
           ${renderCategoryRatingGrid(model.profileCategoryRatings, {
-            preferredCategoryId: model.preferredProfileCategory?.id
+            interactive: true,
+            preferredCategoryId: model.preferredProfileCategory?.id,
+            selectedCategoryId: model.selectedProfileCategory?.id
           })}
+          ${renderProfileRatingHistoryPanel(model.selectedProfileCategory, model.profileCategoryHistory)}
           <div class="summary-grid">
             <article class="summary-tile">
               <span class="summary-label">Record</span>
-              ${renderRecordChips(model.profileSnapshot)}
+              ${renderRecordChips(model.profileCategorySnapshot)}
             </article>
             <article class="summary-tile">
               <span class="summary-label">Debates</span>
-              <strong class="summary-value">${model.profileSnapshot.debates}</strong>
+              <strong class="summary-value">${model.profileCategorySnapshot.debates}</strong>
             </article>
             <article class="summary-tile">
               <span class="summary-label">Upcoming</span>
-              <strong class="summary-value">${model.profileDebatesUpcoming.length}</strong>
+              <strong class="summary-value">${model.profileDebatesUpcomingFiltered.length}</strong>
             </article>
             <article class="summary-tile">
-              <span class="summary-label">Best Rank</span>
-              <strong class="summary-value summary-value-compact">${escapeHtml(bestRankLabel)}</strong>
-              <span class="category-rating-meta">${escapeHtml(bestCategory?.label || "Category")}</span>
+              <span class="summary-label">Rank</span>
+              <strong class="summary-value summary-value-compact">${escapeHtml(categoryRankLabel)}</strong>
+              <span class="category-rating-meta">${escapeHtml(selectedCategory?.label || "Category")}</span>
             </article>
           </div>
         </section>
@@ -4312,11 +4514,14 @@
                 <h3 class="section-title">Upcoming</h3>
               </div>
             </div>
-            ${
-              nextForProfile
-                ? renderDebateCard(nextForProfile, { showAdminControls: currentIsAdmin() })
-                : renderEmptyState("No upcoming debates", "")
-            }
+            ${renderScrollablePanel(
+              renderDebateList(model.profileDebatesUpcomingFiltered, {
+                emptyTitle: "No upcoming debates",
+                emptyCopy: "",
+                showAdminControls: currentIsAdmin()
+              }),
+              "is-results"
+            )}
           </section>
 
           <section class="section-panel">
@@ -4326,7 +4531,7 @@
               </div>
             </div>
             ${renderScrollablePanel(
-              renderDebateList(model.profileDebatesPast, {
+              renderDebateList(model.profileDebatesPastFiltered, {
                 emptyTitle: "No results yet",
                 emptyCopy: "",
                 showAdminControls: currentIsAdmin()
@@ -4348,11 +4553,11 @@
           <div class="summary-grid">
             <article class="summary-tile">
               <span class="summary-label">Wins</span>
-              <strong class="summary-value record-total win">${model.profileSnapshot.wins}</strong>
+              <strong class="summary-value record-total win">${model.profileCategorySnapshot.wins}</strong>
             </article>
             <article class="summary-tile">
               <span class="summary-label">Losses</span>
-              <strong class="summary-value record-total loss">${model.profileSnapshot.losses}</strong>
+              <strong class="summary-value record-total loss">${model.profileCategorySnapshot.losses}</strong>
             </article>
             <article class="summary-tile">
               <span class="summary-label">Draws</span>
@@ -4360,7 +4565,7 @@
             </article>
             <article class="summary-tile">
               <span class="summary-label">Upcoming</span>
-              <strong class="summary-value">${model.profileDebatesUpcoming.length}</strong>
+              <strong class="summary-value">${model.profileDebatesUpcomingFiltered.length}</strong>
             </article>
           </div>
         </section>
@@ -5772,23 +5977,208 @@
     `;
   }
 
+  function renderProfileRatingHistoryPanel(categoryRating, historyPoints, options = {}) {
+    const safeCategory = categoryRating || null;
+    const safeHistory = Array.isArray(historyPoints) ? historyPoints : [];
+    const label = safeCategory?.label || "Category";
+    const published = hasPublishedRating(safeCategory);
+    const latestPoint = safeHistory[safeHistory.length - 1] || null;
+
+    if (!published || !safeHistory.length) {
+      const debateCount = Math.max(0, Number(safeCategory?.debates || 0));
+      const emptyCopy = debateCount
+        ? `Placement history appears after ${MIN_RANKED_DEBATES} debates in ${label}.`
+        : `No ${label.toLowerCase()} debates yet.`;
+
+      return `
+        <section class="profile-history-panel${options.mobile ? " is-mobile" : ""}">
+          <div class="profile-history-head">
+            <div>
+              <span class="summary-label">ELO History</span>
+              <h3 class="profile-history-title">${escapeHtml(label)}</h3>
+            </div>
+            <div class="profile-history-current">
+              <span>Current</span>
+              <strong>${escapeHtml(getRatingDisplayValue(safeCategory))}</strong>
+            </div>
+          </div>
+          <div class="profile-history-empty">
+            <strong>History not unlocked yet</strong>
+            <span>${escapeHtml(emptyCopy)}</span>
+          </div>
+        </section>
+      `;
+    }
+
+    return `
+      <section class="profile-history-panel${options.mobile ? " is-mobile" : ""}">
+        <div class="profile-history-head">
+          <div>
+            <span class="summary-label">ELO History</span>
+            <h3 class="profile-history-title">${escapeHtml(label)}</h3>
+          </div>
+          <div class="profile-history-current">
+            <span>Current</span>
+            <strong>${escapeHtml(getRatingDisplayValue(safeCategory))}</strong>
+          </div>
+        </div>
+        ${renderProfileRatingChart(safeHistory, {
+          categoryLabel: label
+        })}
+        <div class="profile-history-foot">
+          <span>${escapeHtml(`${safeHistory.length} ${safeHistory.length === 1 ? "rating update" : "rating updates"}`)}</span>
+          <span>${escapeHtml(formatShortDate(safeHistory[0]?.at))} - ${escapeHtml(formatShortDate(latestPoint?.at))}</span>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderProfileRatingChart(historyPoints, options = {}) {
+    const safeHistory = (Array.isArray(historyPoints) ? historyPoints : []).filter((point) => {
+      return Number.isFinite(Number(point?.at || 0)) && Number.isFinite(Number(point?.ratingRounded ?? point?.rating));
+    });
+
+    if (!safeHistory.length) {
+      return "";
+    }
+
+    const chartWidth = 720;
+    const chartHeight = 238;
+    const paddingTop = 18;
+    const paddingRight = 18;
+    const paddingBottom = 34;
+    const paddingLeft = 48;
+    const innerWidth = chartWidth - paddingLeft - paddingRight;
+    const innerHeight = chartHeight - paddingTop - paddingBottom;
+    const ratingValues = safeHistory.map((point) => roundHalfAwayFromZero(point.ratingRounded ?? point.rating));
+    const rawMin = Math.min(...ratingValues);
+    const rawMax = Math.max(...ratingValues);
+    const spread = rawMax - rawMin;
+    const ratingPadding = spread > 0 ? Math.max(18, Math.round(spread * 0.18)) : 24;
+    const minRating = Math.floor((rawMin - ratingPadding) / 10) * 10;
+    const maxRating = Math.ceil((rawMax + ratingPadding) / 10) * 10;
+    const firstAt = Number(safeHistory[0].at || 0);
+    const lastAt = Number(safeHistory[safeHistory.length - 1].at || firstAt);
+    const useTimeScale = safeHistory.length > 1 && lastAt > firstAt;
+
+    function getX(point, index) {
+      if (safeHistory.length === 1) {
+        return paddingLeft + (innerWidth / 2);
+      }
+      if (!useTimeScale) {
+        return paddingLeft + ((innerWidth / Math.max(1, safeHistory.length - 1)) * index);
+      }
+      return paddingLeft + (((Number(point.at || firstAt) - firstAt) / Math.max(1, lastAt - firstAt)) * innerWidth);
+    }
+
+    function getY(value) {
+      const safeValue = Number(value) || 0;
+      return paddingTop + (((maxRating - safeValue) / Math.max(1, maxRating - minRating)) * innerHeight);
+    }
+
+    const points = safeHistory.map((point, index) => ({
+      ...point,
+      displayRating: roundHalfAwayFromZero(point.ratingRounded ?? point.rating),
+      x: getX(point, index),
+      y: getY(point.ratingRounded ?? point.rating)
+    }));
+
+    const linePath = points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+      .join(" ");
+    const areaPath =
+      points.length > 1
+        ? `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${(paddingTop + innerHeight).toFixed(2)} L ${points[0].x.toFixed(2)} ${(paddingTop + innerHeight).toFixed(2)} Z`
+        : "";
+    const yTicks = [maxRating, roundHalfAwayFromZero((maxRating + minRating) / 2), minRating];
+    const labelIndexes =
+      points.length === 1 ? [0] : points.length === 2 ? [0, 1] : [0, Math.floor((points.length - 1) / 2), points.length - 1];
+    const uniqueLabelIndexes = [...new Set(labelIndexes)];
+
+    return `
+      <div class="profile-history-chart-shell">
+        <svg
+          class="profile-history-chart"
+          viewBox="0 0 ${chartWidth} ${chartHeight}"
+          role="img"
+          aria-label="${escapeHtml(options.categoryLabel || "Category")} ELO history"
+          preserveAspectRatio="none"
+        >
+          <defs>
+            <linearGradient id="profile-history-fill" x1="0%" x2="0%" y1="0%" y2="100%">
+              <stop offset="0%" class="profile-history-gradient-start"></stop>
+              <stop offset="100%" class="profile-history-gradient-end"></stop>
+            </linearGradient>
+          </defs>
+          ${yTicks
+            .map((tick) => {
+              const y = getY(tick);
+              return `
+                <line class="profile-history-grid-line" x1="${paddingLeft}" y1="${y}" x2="${chartWidth - paddingRight}" y2="${y}"></line>
+                <text class="profile-history-axis-text" x="${paddingLeft - 10}" y="${y + 4}" text-anchor="end">${escapeHtml(String(tick))}</text>
+              `;
+            })
+            .join("")}
+          ${
+            areaPath
+              ? `<path class="profile-history-area" d="${areaPath}" fill="url(#profile-history-fill)"></path>`
+              : ""
+          }
+          ${points.length > 1 ? `<path class="profile-history-line" d="${linePath}"></path>` : ""}
+          ${points
+            .map((point) => {
+              return `
+                <circle class="profile-history-point" cx="${point.x}" cy="${point.y}" r="4.5"></circle>
+                <title>${escapeHtml(`${formatShortDate(point.at)} - ${point.displayRating}`)}</title>
+              `;
+            })
+            .join("")}
+          ${uniqueLabelIndexes
+            .map((index) => {
+              const point = points[index];
+              return `
+                <text class="profile-history-axis-text" x="${point.x}" y="${chartHeight - 8}" text-anchor="middle">
+                  ${escapeHtml(formatShortDate(point.at))}
+                </text>
+              `;
+            })
+            .join("")}
+        </svg>
+      </div>
+    `;
+  }
+
   function renderCategoryRatingGrid(categoryRatings, options = {}) {
     const ratings = Array.isArray(categoryRatings) ? categoryRatings : [];
+    const interactive = Boolean(options.interactive);
     const preferredCategoryId = String(options.preferredCategoryId || "").trim();
+    const selectedCategoryId = String(options.selectedCategoryId || preferredCategoryId).trim();
     const mobile = Boolean(options.mobile);
     const gridClassName = mobile ? "mobile-category-grid" : "category-rating-grid";
     const cardClassName = mobile ? "mobile-category-card" : "category-rating-card";
+    const wrapperAttributes = interactive
+      ? ' role="tablist" aria-label="Profile categories"'
+      : "";
 
     return `
-      <div class="${gridClassName}">
+      <div class="${gridClassName}"${wrapperAttributes}>
         ${ratings
           .map((rating) => {
+            const isPreferred = rating.id === preferredCategoryId;
+            const isSelected = rating.id === selectedCategoryId;
+            const tagName = interactive ? "button" : "article";
+            const actionAttributes = interactive
+              ? ` type="button" role="tab" aria-selected="${isSelected ? "true" : "false"}" data-action="set-profile-category" data-value="${escapeHtml(rating.id)}"`
+              : "";
+
             return `
-              <article class="${cardClassName}${rating.id === preferredCategoryId ? " is-featured" : ""}">
+              <${tagName}
+                class="${cardClassName}${isPreferred ? " is-featured" : ""}${isSelected ? " is-selected" : ""}${interactive ? " is-clickable" : ""}"${actionAttributes}
+              >
                 <span class="summary-label">${escapeHtml(rating.label)}</span>
                 <strong class="category-rating-value">${escapeHtml(getRatingDisplayValue(rating))}</strong>
                 <span class="category-rating-meta">${escapeHtml(getCategoryMetaLabel(rating))}</span>
-              </article>
+              </${tagName}>
             `;
           })
           .join("")}
@@ -8753,6 +9143,13 @@
     if (action === "set-rankings-category") {
       event.preventDefault();
       state.rankingsCategory = normalizeRankingsCategory(actionButton.getAttribute("data-value"));
+      renderApp({ preserveScroll: true });
+      return;
+    }
+
+    if (action === "set-profile-category") {
+      event.preventDefault();
+      state.profileCategory = normalizeRankingsCategory(actionButton.getAttribute("data-value"));
       renderApp({ preserveScroll: true });
       return;
     }
