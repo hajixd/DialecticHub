@@ -4065,8 +4065,8 @@
   function renderScheduleTabs(selectedSection) {
     const safeSection = normalizeScheduleSection(selectedSection);
     const tabs = [
-      { id: "new", label: "New Debate" },
-      { id: "upcoming", label: "Upcoming Debates" }
+      { id: "upcoming", label: "Upcoming Debates" },
+      { id: "new", label: "New Debate" }
     ];
 
     return `
@@ -4303,13 +4303,16 @@
         <section class="mobile-block">
           <span class="page-kicker">Past Debates</span>
           <h2 class="mobile-page-title">Archive</h2>
-          ${renderMobileDebateList(model.past, {
-            emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet",
-            hideStatus: true,
-            hideResultPill: true,
-            fullWidthCategory: true,
-            showAdminControls: currentIsAdmin() && state.archiveEditMode
-          })}
+          ${renderScrollablePanel(
+            renderMobileDebateList(model.past, {
+              emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet",
+              hideStatus: true,
+              hideResultPill: true,
+              fullWidthCategory: true,
+              showAdminControls: currentIsAdmin() && state.archiveEditMode
+            }),
+            "mobile-page-scroll"
+          )}
         </section>
       </section>
     `;
@@ -4322,7 +4325,10 @@
           <span class="page-kicker">Rankings</span>
           <h2 class="mobile-page-title">Rankings</h2>
           ${renderLeaderboardTabs(model.rankingsCategory)}
-          ${renderMobileRankingList(model.leaderboard, `No ${model.rankingsCategoryLabel.toLowerCase()} debaters yet`)}
+          ${renderScrollablePanel(
+            renderMobileRankingList(model.leaderboard, `No ${model.rankingsCategoryLabel.toLowerCase()} debaters yet`),
+            "mobile-page-scroll"
+          )}
         </section>
       </section>
     `;

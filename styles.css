@@ -3130,6 +3130,15 @@ body.is-mobile-app {
   --mobile-tabbar-height: 58px;
 }
 
+.is-mobile-app .toast-stack {
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: 12px;
+  bottom: auto;
+  left: 12px;
+  display: flex;
+  flex-direction: column-reverse;
+}
+
 .is-mobile-app .hub-shell {
   min-height: 100svh;
   padding-bottom: calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad));
@@ -3598,6 +3607,12 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 
 .is-mobile-app .panel-scroll.mobile-profile-scroll {
   max-height: min(38svh, 360px);
+  padding-right: 2px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.is-mobile-app .panel-scroll.mobile-page-scroll {
+  max-height: min(58svh, 560px);
   padding-right: 2px;
   -webkit-overflow-scrolling: touch;
 }
