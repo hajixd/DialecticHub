@@ -1396,6 +1396,10 @@
     return String(value || "").trim().toLowerCase() === "clip" ? "clip" : "full";
   }
 
+  function getVideoModeLabel(value) {
+    return normalizeVideoClipMode(value) === "clip" ? "Part of Video" : "Full Video";
+  }
+
   function parseVideoClipSeconds(value) {
     const raw = String(value || "").trim();
     if (!raw) return null;
@@ -1466,7 +1470,7 @@
     return { startSeconds, endSeconds };
   }
 
-  function syncVideoClipSliderGroup(group) {
+  function syncVideoClipSliderGroup(group, options = {}) {
     if (!group) return false;
 
     const startInput = group.querySelector('[data-video-clip-role="start"]');
@@ -1475,11 +1479,20 @@
     const endDisplay = group.querySelector('[data-video-clip-display="end"]');
     if (!(startInput instanceof HTMLInputElement) || !(endInput instanceof HTMLInputElement)) return false;
 
-    const startSeconds = clampVideoClipSliderSeconds(startInput.value, 0);
-    const endSeconds = clampVideoClipSliderSeconds(
+    const activeRole = String(options.activeRole || "").trim();
+    let startSeconds = clampVideoClipSliderSeconds(startInput.value, 0);
+    let endSeconds = clampVideoClipSliderSeconds(
       endInput.value,
       Math.min(VIDEO_CLIP_SLIDER_MAX_SECONDS, startSeconds + VIDEO_CLIP_DEFAULT_END_SECONDS)
     );
+
+    if (activeRole === "start" && startSeconds >= endSeconds) {
+      startSeconds = Math.max(0, endSeconds - VIDEO_CLIP_SLIDER_STEP_SECONDS);
+    } else if (activeRole === "end" && endSeconds <= startSeconds) {
+      endSeconds = Math.min(VIDEO_CLIP_SLIDER_MAX_SECONDS, startSeconds + VIDEO_CLIP_SLIDER_STEP_SECONDS);
+    } else if (endSeconds <= startSeconds) {
+      endSeconds = Math.min(VIDEO_CLIP_SLIDER_MAX_SECONDS, startSeconds + VIDEO_CLIP_SLIDER_STEP_SECONDS);
+    }
 
     if (startInput.value !== String(startSeconds)) {
       startInput.value = String(startSeconds);
@@ -1494,25 +1507,31 @@
       endDisplay.textContent = formatVideoClipInput(endSeconds) || "0:00";
     }
 
+    const startPercent = Math.max(0, Math.min(100, (startSeconds / VIDEO_CLIP_SLIDER_MAX_SECONDS) * 100));
+    const endPercent = Math.max(0, Math.min(100, (endSeconds / VIDEO_CLIP_SLIDER_MAX_SECONDS) * 100));
+    group.style.setProperty("--video-clip-start", `${startPercent}%`);
+    group.style.setProperty("--video-clip-end", `${endPercent}%`);
     group.classList.toggle("is-invalid", endSeconds <= startSeconds);
     return true;
   }
 
-  function syncVideoLinkFieldsUi(scope) {
+  function syncVideoLinkFieldsUi(scope, options = {}) {
     const root = scope?.closest ? scope.closest(".video-link-fields") : null;
     if (!root) return false;
 
-    const modeInput = root.querySelector('select[name="videoMode"], select[data-draft-field="videoMode"], select[data-resolve-video-mode]');
+    const modeInput = root.querySelector('input[name="videoMode"], input[data-draft-field="videoMode"], input[data-resolve-video-mode], select[name="videoMode"], select[data-draft-field="videoMode"], select[data-resolve-video-mode]');
     const sliderGroup = root.querySelector("[data-video-clip-group]");
     const isClipMode =
-      modeInput instanceof HTMLSelectElement ? normalizeVideoClipMode(modeInput.value) === "clip" : false;
+      (modeInput instanceof HTMLInputElement || modeInput instanceof HTMLSelectElement)
+        ? normalizeVideoClipMode(modeInput.value) === "clip"
+        : false;
 
     if (sliderGroup) {
       sliderGroup.classList.toggle("is-disabled", !isClipMode);
       sliderGroup.querySelectorAll('input[type="range"]').forEach((input) => {
         input.disabled = !isClipMode;
       });
-      syncVideoClipSliderGroup(sliderGroup);
+      syncVideoClipSliderGroup(sliderGroup, { activeRole: options.activeRole });
     }
 
     return true;
@@ -3274,6 +3293,9 @@
         el.sideContent.innerHTML = nextSideContent;
       }
     }
+    el.mainContent?.querySelectorAll(".video-link-fields").forEach((node) => {
+      syncVideoLinkFieldsUi(node);
+    });
     syncQueuePanelHeight();
 
     if (preserveScroll || releaseMobileMainContentHeight) {
@@ -3568,7 +3590,6 @@
   }
 
   function renderMobileDashboardPage(model) {
-    const nextDebate = model.profileDebatesUpcoming[0] || null;
     const avatarDataUrl = getAvatarDataUrlForUid(model.profileUid || model.profileSnapshot.uid);
     const bestCategory = model.preferredProfileCategory || model.profileCategoryRatings[0] || null;
     const bestRankLabel = getCategoryRankLabel(bestCategory);
@@ -3612,21 +3633,27 @@
           <div class="mobile-section-head">
             <h3>Upcoming</h3>
           </div>
-          ${
-            nextDebate
-              ? renderMobileDebateList([nextDebate])
-              : renderEmptyState("No upcoming debates", "")
-          }
+          ${renderScrollablePanel(
+            renderMobileDebateList(model.profileDebatesUpcoming, {
+              emptyTitle: "No upcoming debates"
+            }),
+            "mobile-profile-scroll"
+          )}
         </section>
 
         <section class="mobile-block">
           <div class="mobile-section-head">
             <h3>Results</h3>
           </div>
-          ${renderMobileDebateList(model.profileDebatesPast, {
-            emptyTitle: "No results yet",
-            limit: 4
-          })}
+          ${renderScrollablePanel(
+            renderMobileDebateList(model.profileDebatesPast, {
+              emptyTitle: "No results yet",
+              hideStatus: true,
+              hideResultPill: true,
+              fullWidthCategory: true
+            }),
+            "mobile-profile-scroll"
+          )}
         </section>
       </section>
     `;
@@ -3649,6 +3676,13 @@
     const aLoser = debate.status === "resolved" && debate.result === "b";
     const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
+    const loserName = debate.status === "resolved"
+      ? debate.result === "a"
+        ? formatDisplayName(debate.debaterBName || "debater", "Debater")
+        : debate.result === "b"
+          ? formatDisplayName(debate.debaterAName || "debater", "Debater")
+          : ""
+      : "";
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
@@ -3660,6 +3694,9 @@
         : debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A"
           ? " is-winner"
           : "";
+    const loserToneClass = debate.status === "resolved" && debate.result !== "draw" && loserName
+      ? " is-loser"
+      : "";
     const commentBusy = state.actionBusyKey === `${debate.id}:comment`;
     const videoBusy = state.actionBusyKey === `${debate.id}:video`;
 
@@ -3690,9 +3727,13 @@
               <span class="summary-label">Category</span>
               <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
             </article>
-            <article class="mobile-stat${winnerName ? " is-winner" : ""}">
-              <span class="summary-label">Winner</span>
-              <strong>${escapeHtml(winnerName || "N/A")}</strong>
+            <article class="mobile-stat${resultToneClass}">
+              <span class="summary-label">${escapeHtml(resultDetailLabel)}</span>
+              <strong>${escapeHtml(resultDetailValue)}</strong>
+            </article>
+            <article class="mobile-stat${loserToneClass}">
+              <span class="summary-label">Loser</span>
+              <strong>${escapeHtml(loserName || "N/A")}</strong>
             </article>
           </div>
         </section>
@@ -4322,6 +4363,13 @@
     const aLoser = debate.status === "resolved" && debate.result === "b";
     const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
+    const loserName = debate.status === "resolved"
+      ? debate.result === "a"
+        ? formatDisplayName(debate.debaterBName || "debater", "Debater")
+        : debate.result === "b"
+          ? formatDisplayName(debate.debaterAName || "debater", "Debater")
+          : ""
+      : "";
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
     const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
@@ -4332,6 +4380,9 @@
         : debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A"
           ? " is-winner"
           : "";
+    const loserToneClass = debate.status === "resolved" && debate.result !== "draw" && loserName
+      ? " is-loser"
+      : "";
     const commentBusy = state.actionBusyKey === `${debate.id}:comment`;
     const videoBusy = state.actionBusyKey === `${debate.id}:video`;
 
@@ -4364,6 +4415,10 @@
             <div class="detail-row${resultToneClass}">
               <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
               <strong>${escapeHtml(resultDetailValue)}</strong>
+            </div>
+            <div class="detail-row${loserToneClass}">
+              <span class="detail-label">Loser</span>
+              <strong>${escapeHtml(loserName || "N/A")}</strong>
             </div>
           </div>
 
@@ -4858,7 +4913,7 @@
       <section class="side-section">
         <span class="panel-label">Debate</span>
         <h3>${escapeHtml(debate.topic || "Untitled debate")}</h3>
-        <div class="profile-record">
+        <div class="profile-record profile-record-single">
           <div>
             <span class="summary-label">Status</span>
             <strong>${escapeHtml(status.label)}</strong>
@@ -5359,6 +5414,72 @@
     `;
   }
 
+  function getVideoModeSelectKey(options = {}) {
+    const owner = String(options.owner || "").trim();
+    const resolveDebateId = String(options.resolveDebateId || "").trim();
+    const inputNamePrefix = String(options.inputNamePrefix || "").trim();
+
+    if (owner) return `video-mode-${owner}`;
+    if (resolveDebateId) return `resolve-video-mode-${resolveDebateId}`;
+    if (inputNamePrefix) return `${inputNamePrefix}-video-mode`;
+    return "video-mode";
+  }
+
+  function renderVideoModeSelect(options = {}) {
+    const safeMode = normalizeVideoClipMode(options.mode);
+    const safeSelectKey = getVideoModeSelectKey(options);
+    const inputAttributes = String(options.inputAttributes || "").trim();
+    const selectedLabel = getVideoModeLabel(safeMode);
+
+    return `
+      <label class="field video-clip-mode-field">
+        <span>Video</span>
+        <div
+          class="custom-select${state.openSelectKey === safeSelectKey ? " is-open" : ""}"
+          data-select-root="${escapeHtml(safeSelectKey)}"
+          data-video-mode-root="true"
+        >
+          <input
+            type="hidden"
+            value="${escapeHtml(safeMode)}"
+            data-video-mode-input="true"
+            ${inputAttributes}
+          />
+          <button
+            class="custom-select-trigger"
+            type="button"
+            data-action="toggle-video-mode-select"
+            data-select-key="${escapeHtml(safeSelectKey)}"
+            aria-haspopup="listbox"
+            aria-expanded="${state.openSelectKey === safeSelectKey ? "true" : "false"}"
+          >
+            <span class="custom-select-value">${escapeHtml(selectedLabel)}</span>
+            <span class="custom-select-caret" aria-hidden="true"></span>
+          </button>
+          <div class="custom-select-menu${state.openSelectKey === safeSelectKey ? "" : " hidden"}" role="listbox" aria-label="Video mode">
+            <div class="custom-select-options">
+              ${[
+                { value: "full", label: "Full Video" },
+                { value: "clip", label: "Part of Video" }
+              ]
+                .map(({ value, label }) => `
+                  <button
+                    class="custom-select-option${safeMode === value ? " is-selected" : ""}"
+                    type="button"
+                    data-action="choose-video-mode"
+                    data-value="${escapeHtml(value)}"
+                  >
+                    ${escapeHtml(label)}
+                  </button>
+                `)
+                .join("")}
+            </div>
+          </div>
+        </div>
+      </label>
+    `;
+  }
+
   function renderVideoClipSliderFields(options = {}) {
     const safeMode = normalizeVideoClipMode(options.mode);
     const { startSeconds, endSeconds } = getVideoClipRangeValues(options.startValue, options.endValue);
@@ -5367,40 +5488,44 @@
 
     return `
       <div class="video-clip-slider-grid${safeMode === "clip" ? "" : " is-disabled"}" data-video-clip-group="true">
-        <label class="video-clip-slider-card">
-          <span class="video-clip-slider-head">
-            <span>Start</span>
-            <strong data-video-clip-display="start">${escapeHtml(formatVideoClipInput(startSeconds) || "0:00")}</strong>
-          </span>
-          <input
-            class="video-clip-slider-input"
-            type="range"
-            min="0"
-            max="${VIDEO_CLIP_SLIDER_MAX_SECONDS}"
-            step="${VIDEO_CLIP_SLIDER_STEP_SECONDS}"
-            value="${startSeconds}"
-            data-video-clip-role="start"
-            ${safeMode === "clip" ? "" : "disabled"}
-            ${startInputAttributes}
-          />
-        </label>
-        <label class="video-clip-slider-card">
-          <span class="video-clip-slider-head">
-            <span>End</span>
-            <strong data-video-clip-display="end">${escapeHtml(formatVideoClipInput(endSeconds) || "0:00")}</strong>
-          </span>
-          <input
-            class="video-clip-slider-input"
-            type="range"
-            min="0"
-            max="${VIDEO_CLIP_SLIDER_MAX_SECONDS}"
-            step="${VIDEO_CLIP_SLIDER_STEP_SECONDS}"
-            value="${endSeconds}"
-            data-video-clip-role="end"
-            ${safeMode === "clip" ? "" : "disabled"}
-            ${endInputAttributes}
-          />
-        </label>
+        <div class="video-clip-slider-card">
+          <div class="video-clip-slider-values">
+            <span class="video-clip-slider-head">
+              <span>Start</span>
+              <strong data-video-clip-display="start">${escapeHtml(formatVideoClipInput(startSeconds) || "0:00")}</strong>
+            </span>
+            <span class="video-clip-slider-head">
+              <span>End</span>
+              <strong data-video-clip-display="end">${escapeHtml(formatVideoClipInput(endSeconds) || "0:00")}</strong>
+            </span>
+          </div>
+          <div class="video-clip-slider-shell">
+            <div class="video-clip-slider-track" aria-hidden="true"></div>
+            <div class="video-clip-slider-track video-clip-slider-track-active" aria-hidden="true"></div>
+            <input
+              class="video-clip-slider-input is-start"
+              type="range"
+              min="0"
+              max="${VIDEO_CLIP_SLIDER_MAX_SECONDS}"
+              step="${VIDEO_CLIP_SLIDER_STEP_SECONDS}"
+              value="${startSeconds}"
+              data-video-clip-role="start"
+              ${safeMode === "clip" ? "" : "disabled"}
+              ${startInputAttributes}
+            />
+            <input
+              class="video-clip-slider-input is-end"
+              type="range"
+              min="0"
+              max="${VIDEO_CLIP_SLIDER_MAX_SECONDS}"
+              step="${VIDEO_CLIP_SLIDER_STEP_SECONDS}"
+              value="${endSeconds}"
+              data-video-clip-role="end"
+              ${safeMode === "clip" ? "" : "disabled"}
+              ${endInputAttributes}
+            />
+          </div>
+        </div>
       </div>
     `;
   }
@@ -5410,7 +5535,7 @@
     const safeDraft = draft || {};
     const safeMode = normalizeVideoClipMode(safeDraft.videoMode);
     return `
-      <div class="video-link-fields">
+      <div class="video-link-fields" data-video-link-owner="${escapeHtml(safeOwner)}">
         <label class="field">
           <span>YouTube link</span>
           <input
@@ -5423,16 +5548,11 @@
           />
         </label>
         <div class="field-row video-clip-row">
-          <label class="field video-clip-mode-field">
-            <span>Video</span>
-            <select
-              name="videoMode"
-              data-draft-owner="${escapeHtml(safeOwner)}"
-              data-draft-field="videoMode"
-            >
-              ${renderVideoModeOptions(safeDraft.videoMode)}
-            </select>
-          </label>
+          ${renderVideoModeSelect({
+            mode: safeDraft.videoMode,
+            owner: safeOwner,
+            inputAttributes: `name="videoMode" data-draft-owner="${escapeHtml(safeOwner)}" data-draft-field="videoMode"`
+          })}
         </div>
         ${renderVideoClipSliderFields({
           mode: safeMode,
@@ -5441,7 +5561,7 @@
           startInputAttributes: `name="videoClipStart" data-draft-owner="${escapeHtml(safeOwner)}" data-draft-field="videoClipStart"`,
           endInputAttributes: `name="videoClipEnd" data-draft-owner="${escapeHtml(safeOwner)}" data-draft-field="videoClipEnd"`
         })}
-        <p class="video-clip-note">Use the sliders to choose the part shown when Part of Video is selected.</p>
+        <p class="video-clip-note">Use the slider handles to choose the part shown when Part of Video is selected.</p>
       </div>
     `;
   }
@@ -5466,16 +5586,12 @@
           />
         </label>
         <div class="field-row video-clip-row">
-          <label class="field video-clip-mode-field">
-            <span>Video</span>
-            <select
-              ${useNames ? 'name="videoMode"' : ""}
-              ${options.resolveDebateId ? `data-resolve-video-mode="${escapeHtml(options.resolveDebateId)}"` : ""}
-              id="${escapeHtml(`${safePrefix}video-mode`)}"
-            >
-              ${renderVideoModeOptions(mode)}
-            </select>
-          </label>
+          ${renderVideoModeSelect({
+            mode,
+            resolveDebateId: options.resolveDebateId,
+            inputNamePrefix: safePrefix ? safePrefix.replace(/-$/, "") : "debate-video",
+            inputAttributes: `${useNames ? 'name="videoMode"' : ""} ${options.resolveDebateId ? `data-resolve-video-mode="${escapeHtml(options.resolveDebateId)}"` : ""} id="${escapeHtml(`${safePrefix}video-mode`)}"`
+          })}
         </div>
         ${renderVideoClipSliderFields({
           mode,
@@ -5484,7 +5600,7 @@
           startInputAttributes: `${useNames ? 'name="videoClipStart"' : ""} ${options.resolveDebateId ? `data-resolve-video-start="${escapeHtml(options.resolveDebateId)}"` : ""} id="${escapeHtml(`${safePrefix}video-start`)}"`,
           endInputAttributes: `${useNames ? 'name="videoClipEnd"' : ""} ${options.resolveDebateId ? `data-resolve-video-end="${escapeHtml(options.resolveDebateId)}"` : ""} id="${escapeHtml(`${safePrefix}video-end`)}"`
         })}
-        <p class="video-clip-note">Use the sliders to choose the exact clip shown when Part of Video is selected.</p>
+        <p class="video-clip-note">Use the slider handles to choose the exact clip shown when Part of Video is selected.</p>
       </div>
     `;
   }
@@ -6237,6 +6353,10 @@
 
     root.classList.toggle("is-open", open);
     root.querySelector(".custom-select-menu")?.classList.toggle("hidden", !open);
+    const triggerButton = root.querySelector(".custom-select-trigger");
+    if (triggerButton instanceof HTMLButtonElement) {
+      triggerButton.setAttribute("aria-expanded", open ? "true" : "false");
+    }
     const visibleInput = root.querySelector(".custom-select-input");
     if (visibleInput instanceof HTMLInputElement) {
       visibleInput.setAttribute("aria-expanded", open ? "true" : "false");
@@ -8056,7 +8176,9 @@
 
     return {
       videoUrl: getResolveVideoInputValue(safeDebateId),
-      videoMode: modeInput instanceof HTMLSelectElement ? normalizeVideoClipMode(modeInput.value) : "full",
+      videoMode: (modeInput instanceof HTMLInputElement || modeInput instanceof HTMLSelectElement)
+        ? normalizeVideoClipMode(modeInput.value)
+        : "full",
       videoClipStart: startInput instanceof HTMLInputElement ? String(startInput.value || "").trim() : "",
       videoClipEnd: endInput instanceof HTMLInputElement ? String(endInput.value || "").trim() : ""
     };
@@ -8410,6 +8532,13 @@
       return;
     }
 
+    if (action === "toggle-video-mode-select") {
+      event.preventDefault();
+      const selectKey = String(actionButton.getAttribute("data-select-key") || "").trim();
+      toggleOpenSelect(selectKey);
+      return;
+    }
+
     if (action === "choose-debater") {
       event.preventDefault();
       const field = String(actionButton.getAttribute("data-select-field") || "").trim();
@@ -8433,6 +8562,44 @@
       if (!syncDraftFormUi(owner)) {
         renderApp({ preserveScroll: true });
       }
+      return;
+    }
+
+    if (action === "choose-video-mode") {
+      event.preventDefault();
+      const root = actionButton.closest("[data-video-mode-root]");
+      const value = normalizeVideoClipMode(actionButton.getAttribute("data-value"));
+      const modeInput = root?.querySelector("[data-video-mode-input]");
+      const selectKey = String(root?.getAttribute("data-select-root") || "").trim();
+      const owner =
+        modeInput instanceof HTMLInputElement
+          ? String(modeInput.getAttribute("data-draft-owner") || "").trim()
+          : "";
+
+      if (modeInput instanceof HTMLInputElement) {
+        modeInput.value = value;
+      }
+      if (owner) {
+        setDraftField(owner, "videoMode", value);
+      }
+
+      if (selectKey) {
+        setCustomSelectOpenState(selectKey, false);
+      }
+      state.openSelectKey = "";
+
+      const labelNode = root?.querySelector(".custom-select-value");
+      if (labelNode) {
+        labelNode.textContent = getVideoModeLabel(value);
+        labelNode.classList.remove("is-placeholder");
+      }
+      const optionButtons = root ? root.querySelectorAll('[data-action="choose-video-mode"]') : [];
+      optionButtons.forEach((node) => {
+        if (!(node instanceof HTMLButtonElement)) return;
+        node.classList.toggle("is-selected", normalizeVideoClipMode(node.getAttribute("data-value")) === value);
+      });
+
+      syncVideoLinkFieldsUi(root);
       return;
     }
 
@@ -8562,9 +8729,6 @@
     const isVideoFieldInput =
       videoLinkFields &&
       (
-        (event.target instanceof HTMLSelectElement && (
-          event.target.name === "videoMode" || event.target.hasAttribute("data-resolve-video-mode")
-        )) ||
         ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && (
           event.target.name === "videoClipStart" ||
           event.target.name === "videoClipEnd" ||
@@ -8577,7 +8741,9 @@
     const field = event.target.getAttribute("data-draft-field");
     if (!field) {
       if (isVideoFieldInput) {
-        syncVideoLinkFieldsUi(videoLinkFields);
+        syncVideoLinkFieldsUi(videoLinkFields, {
+          activeRole: String(event.target.getAttribute("data-video-clip-role") || "").trim()
+        });
       }
       return;
     }
@@ -8588,7 +8754,9 @@
 
     setDraftField(owner, field, String(event.target.value || ""));
     if (videoLinkFields) {
-      syncVideoLinkFieldsUi(videoLinkFields);
+      syncVideoLinkFieldsUi(videoLinkFields, {
+        activeRole: String(event.target.getAttribute("data-video-clip-role") || "").trim()
+      });
     }
 
   }
