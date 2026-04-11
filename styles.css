@@ -466,6 +466,10 @@ html[data-theme="light"] .avatar-chip {
   gap: 8px;
 }
 
+.schedule-tabs {
+  margin-top: 4px;
+}
+
 .field span {
   font-size: 12px;
   font-weight: 600;
@@ -884,6 +888,19 @@ textarea:focus {
   border-radius: var(--radius-md);
   background: var(--panel-2);
   box-shadow: var(--shadow);
+}
+
+.search-results-panel {
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  max-height: none;
+  box-shadow: none;
+}
+
+.search-results-shell {
+  min-height: 240px;
 }
 
 .search-suggestion {
@@ -1460,6 +1477,16 @@ textarea:focus {
   gap: 12px;
 }
 
+.admin-user-manager,
+.admin-user-search-results {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-user-search-field {
+  min-height: 44px;
+}
+
 .admin-user-card {
   display: grid;
   gap: 12px;
@@ -1486,6 +1513,28 @@ textarea:focus {
   color: var(--text-dim);
   font-size: 12px;
   word-break: break-all;
+}
+
+.admin-user-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-user-status.is-admin {
+  border-color: rgba(212, 176, 103, 0.34);
+  background: rgba(212, 176, 103, 0.12);
+  color: var(--gold-strong);
 }
 
 .admin-user-actions {
@@ -2401,10 +2450,7 @@ body.is-mobile-app {
 }
 
 .is-mobile-app .topbar {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 12px;
-  border-bottom: 1px solid var(--line);
+  display: none;
 }
 
 .is-mobile-app .search-shell,
@@ -2488,7 +2534,7 @@ body.is-mobile-app {
 
 .is-mobile-app .mobile-page {
   gap: 18px;
-  padding-top: 6px;
+  padding-top: 0;
 }
 
 .is-mobile-app .mobile-search-field {
@@ -2514,6 +2560,52 @@ body.is-mobile-app {
 .is-mobile-app .mobile-block:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.is-mobile-app .mobile-settings-head,
+.is-mobile-app .mobile-settings-title,
+.is-mobile-app .mobile-settings-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.is-mobile-app .mobile-settings-title {
+  gap: 6px;
+}
+
+.is-mobile-app .mobile-settings-back {
+  width: fit-content;
+  min-height: 38px;
+  padding: 0 14px;
+}
+
+.is-mobile-app .mobile-settings-tab {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  color: var(--text);
+  text-align: left;
+}
+
+.is-mobile-app .mobile-settings-tab strong {
+  font-size: 15px;
+}
+
+.is-mobile-app .mobile-settings-tab span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.is-mobile-app .mobile-settings-tab.is-danger {
+  border-color: rgba(211, 106, 97, 0.28);
+}
+
+.is-mobile-app .mobile-settings-tab.is-danger strong {
+  color: #f1a39d;
 }
 
 .is-mobile-app .mobile-identity {

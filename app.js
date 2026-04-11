@@ -28,7 +28,7 @@
   const PW_PEPPER = "::codenames_pw_v1";
   const MAX_PROFILE_AVATAR_DATA_URL_LEN = 220000;
   const PLACEHOLDER_UID_PREFIX = "invite:";
-  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "admin", "debate"]);
+  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1200;
   const ELO_K = 32;
   const MIN_RANKED_DEBATES = 4;
@@ -47,6 +47,8 @@
     currentPage: getPageFromUrl(),
     profileUid: getProfileUidFromUrl(),
     debateId: getDebateIdFromUrl(),
+    settingsSection: "root",
+    scheduleSection: "new",
     searchTerm: "",
     searchDraft: "",
     searchSuggestions: [],
@@ -54,6 +56,7 @@
     searchHighlightIndex: -1,
     directory: [],
     debates: [],
+    userProfiles: [],
     userMenuOpen: false,
     authTab: "login",
     scheduleSaving: false,
@@ -70,12 +73,14 @@
     isMobileViewport: false,
     themeMode: getStoredThemeMode(),
     rankingsCategory: "",
+    adminUserSearchDraft: "",
     adminLogSaving: false,
     scheduleDraft: makeDefaultScheduleDraft(""),
     lazyDebateDraft: makeDefaultLazyDebateDraft(),
     unsubDirectory: null,
     unsubDebates: null,
-    unsubSelfProfile: null
+    unsubSelfProfile: null,
+    unsubAdminProfiles: null
   };
 
   const el = {
@@ -263,6 +268,20 @@
 
   function normalizeRankingsCategory(value) {
     return normalizeDebateCategory(value, DEBATE_CATEGORIES[0].id);
+  }
+
+  function normalizeUserRole(value, fallback = "") {
+    const safeValue = String(value || "").trim().toLowerCase();
+    if (safeValue === "admin" || safeValue === "user") {
+      return safeValue;
+    }
+    const safeFallback = String(fallback || "").trim().toLowerCase();
+    return safeFallback === "admin" || safeFallback === "user" ? safeFallback : "";
+  }
+
+  function normalizeScheduleSection(value) {
+    const safeValue = String(value || "").trim().toLowerCase();
+    return safeValue === "upcoming" ? "upcoming" : "new";
   }
 
   function getStableCategoryFromSeed(seed) {
@@ -623,6 +642,10 @@
   }
 
   function currentIsAdmin() {
+    const explicitRole = normalizeUserRole(state.selfProfile?.role, "");
+    if (explicitRole) {
+      return explicitRole === "admin";
+    }
     return normalizeUsername(state.username) === "admin";
   }
 
@@ -663,6 +686,14 @@
     state.searchHighlightIndex = -1;
   }
 
+  function normalizeSettingsSection(value) {
+    const safeValue = String(value || "").trim().toLowerCase();
+    if (["profile", "awaiting", "lazy", "users"].includes(safeValue)) {
+      return safeValue;
+    }
+    return "root";
+  }
+
   function setPage(page, options = {}) {
     const nextPage = VALID_PAGES.has(page) ? page : "dashboard";
     const currentUid = String(state.user?.uid || "").trim();
@@ -671,6 +702,7 @@
     state.currentPage = nextPage;
     state.profileUid = nextPage === "dashboard" && requestedProfileUid && requestedProfileUid !== currentUid ? requestedProfileUid : "";
     state.debateId = nextPage === "debate" && requestedDebateId ? requestedDebateId : "";
+    state.settingsSection = nextPage === "settings" ? normalizeSettingsSection(options.settingsSection || "root") : "root";
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
@@ -700,6 +732,25 @@
     renderApp();
   }
 
+  function setSettingsSection(section) {
+    const nextSection = normalizeSettingsSection(section);
+    const requiresAdmin = ["awaiting", "lazy", "users"].includes(nextSection);
+    if (requiresAdmin && !currentIsAdmin()) {
+      return;
+    }
+
+    state.settingsSection = nextSection;
+    renderApp();
+    window.requestAnimationFrame(() => window.scrollTo(0, 0));
+  }
+
+  function setScheduleSection(section) {
+    state.scheduleSection = normalizeScheduleSection(section);
+    state.openSelectKey = "";
+    renderApp({ preserveScroll: true });
+    window.requestAnimationFrame(() => window.scrollTo(0, 0));
+  }
+
   function syncPrimaryNavLink(mobileViewport) {
     if (!el.primaryNavLink) return;
 
@@ -716,6 +767,35 @@
     if (el.primaryNavLink.textContent !== nextLabel) {
       el.primaryNavLink.textContent = nextLabel;
     }
+  }
+
+  function syncSettingsNavLink(mobileViewport) {
+    if (!el.adminNavLink) return;
+
+    if (mobileViewport) {
+      if (el.adminNavLink.getAttribute("data-page-link") !== "settings") {
+        el.adminNavLink.setAttribute("data-page-link", "settings");
+      }
+      if (el.adminNavLink.getAttribute("href") !== "./?page=settings") {
+        el.adminNavLink.setAttribute("href", "./?page=settings");
+      }
+      if (el.adminNavLink.textContent !== "Settings") {
+        el.adminNavLink.textContent = "Settings";
+      }
+      el.adminNavLink.classList.remove("hidden");
+      return;
+    }
+
+    if (el.adminNavLink.getAttribute("data-page-link") !== "admin") {
+      el.adminNavLink.setAttribute("data-page-link", "admin");
+    }
+    if (el.adminNavLink.getAttribute("href") !== "./?page=admin") {
+      el.adminNavLink.setAttribute("href", "./?page=admin");
+    }
+    if (el.adminNavLink.textContent !== "Admin") {
+      el.adminNavLink.textContent = "Admin";
+    }
+    el.adminNavLink.classList.toggle("hidden", !currentIsAdmin());
   }
 
   function openProfile(uid) {
@@ -965,7 +1045,9 @@
       { page: "rankings", title: "Rankings", note: "Open rankings" }
     ];
 
-    if (currentIsAdmin()) {
+    if (state.isMobileViewport) {
+      pages.push({ page: "settings", title: "Settings", note: "Open settings" });
+    } else if (currentIsAdmin()) {
       pages.push({ page: "admin", title: "Admin", note: "Resolve debates" });
     }
 
@@ -1173,7 +1255,7 @@
       .join("");
   }
 
-  function renderMobileSearchResults() {
+  function renderSearchResultsList(className = "") {
     const query = String(state.searchDraft || "").trim();
     state.searchSuggestions = buildSearchSuggestions(query);
 
@@ -1191,11 +1273,20 @@
       state.searchHighlightIndex = 0;
     }
 
+    const classes = ["search-popover"];
+    if (className) {
+      classes.push(String(className).trim());
+    }
+
     return `
-      <div class="search-popover mobile-search-results" role="listbox" aria-label="Search results">
+      <div class="${classes.join(" ")}" role="listbox" aria-label="Search results">
         ${renderSearchSuggestions()}
       </div>
     `;
+  }
+
+  function renderMobileSearchResults() {
+    return renderSearchResultsList("mobile-search-results");
   }
 
   function syncMobileSearchPageUi() {
@@ -1281,6 +1372,21 @@
     }
 
     renderApp({ preserveScroll: true });
+  }
+
+  function openSearchResultsPage(query = state.searchDraft) {
+    state.searchDraft = String(query || "").trim();
+    state.searchTerm = "";
+    state.searchSuggestions = [];
+    state.searchMenuOpen = false;
+    state.searchHighlightIndex = -1;
+
+    if (state.currentPage === "search") {
+      renderApp({ preserveScroll: true });
+      return;
+    }
+
+    setPage("search");
   }
 
   function applySearchSuggestionByIndex(index) {
@@ -1419,6 +1525,26 @@
     );
   }
 
+  function getStoredUserProfileByUid(uid) {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid) return null;
+    if (safeUid === String(state.user?.uid || "").trim() && state.selfProfile) {
+      return state.selfProfile;
+    }
+    return state.userProfiles.find((entry) => String(entry.uid || "").trim() === safeUid) || null;
+  }
+
+  function getUserRoleForUid(uid) {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid) return "user";
+    const profile = getStoredUserProfileByUid(safeUid);
+    const explicitRole = normalizeUserRole(profile?.role, "");
+    if (explicitRole) {
+      return explicitRole;
+    }
+    return normalizeUsername(getNameForUid(safeUid, "")) === "admin" ? "admin" : "user";
+  }
+
   function getAdminManagedUsers() {
     return [...state.directory]
       .filter((entry) => {
@@ -1428,9 +1554,26 @@
       .map((entry) => ({
         ...entry,
         uid: String(entry.uid || "").trim(),
-        username: normalizeUsername(entry.username || entry.name || "") || "debater"
+        username: normalizeUsername(entry.username || entry.name || "") || "debater",
+        role: getUserRoleForUid(entry.uid)
       }))
       .sort((left, right) => left.username.localeCompare(right.username));
+  }
+
+  function normalizeAdminUserSearchQuery(query) {
+    return String(query || "").trim().toLowerCase().replace(/\s+/g, "_");
+  }
+
+  function getFilteredAdminManagedUsers(query = state.adminUserSearchDraft) {
+    const users = getAdminManagedUsers();
+    const needle = normalizeAdminUserSearchQuery(query);
+    if (!needle) return users;
+
+    return users.filter((entry) => {
+      const username = normalizeUsername(entry.username || entry.name || "");
+      const uid = String(entry.uid || "").trim().toLowerCase();
+      return username.includes(needle) || uid.includes(needle);
+    });
   }
 
   function isAdminManagingTargetUser(uid) {
@@ -1815,10 +1958,12 @@
     unsubscribeFromDirectory();
     unsubscribeFromDebates();
     unsubscribeFromSelfProfile();
+    unsubscribeFromAdminProfiles();
     state.user = { uid: "demo-haji", displayName: "haji" };
     state.username = "haji";
     state.profilePictureBusy = false;
     state.selfProfile = { username: "haji", name: "haji", avatarDataUrl: "" };
+    state.userProfiles = [];
     state.directory = createPreviewDirectory();
     state.debates = createPreviewDebates();
     resetSearchState();
@@ -1844,6 +1989,24 @@
       },
       (error) => {
         console.warn("Could not subscribe to your profile", error);
+      }
+    );
+  }
+
+  function subscribeToAdminProfiles() {
+    unsubscribeFromAdminProfiles();
+    if (!state.user || !currentIsAdmin() || isPreviewMode()) return;
+
+    state.unsubAdminProfiles = db.collection("users").onSnapshot(
+      (snapshot) => {
+        state.userProfiles = snapshot.docs.map((doc) => ({
+          uid: doc.id,
+          ...(doc.data() || {})
+        }));
+        renderApp({ preserveScroll: true });
+      },
+      (error) => {
+        console.warn("Could not subscribe to user profiles", error);
       }
     );
   }
@@ -1910,6 +2073,25 @@
       state.unsubSelfProfile();
     }
     state.unsubSelfProfile = null;
+  }
+
+  function unsubscribeFromAdminProfiles() {
+    if (typeof state.unsubAdminProfiles === "function") {
+      state.unsubAdminProfiles();
+    }
+    state.unsubAdminProfiles = null;
+    state.userProfiles = [];
+  }
+
+  function syncAdminProfilesSubscription() {
+    if (!state.user || isPreviewMode() || !currentIsAdmin()) {
+      unsubscribeFromAdminProfiles();
+      return;
+    }
+
+    if (!state.unsubAdminProfiles) {
+      subscribeToAdminProfiles();
+    }
   }
 
   function ensureScheduleDraftParticipants() {
@@ -2208,13 +2390,20 @@
       return;
     }
 
+    syncAdminProfilesSubscription();
+
     if (!currentIsAdmin() && state.currentPage === "admin") {
       setPage("dashboard", { replace: true });
       return;
     }
 
-    if (!mobileViewport && state.currentPage === "search") {
-      setPage("dashboard", { replace: true });
+    if (mobileViewport && state.currentPage === "admin") {
+      setPage("settings", { replace: true });
+      return;
+    }
+
+    if (!mobileViewport && state.currentPage === "settings") {
+      setPage(currentIsAdmin() ? "admin" : "dashboard", { replace: true });
       return;
     }
 
@@ -2222,6 +2411,7 @@
     const model = buildViewModel();
     syncSearchUi();
     syncPrimaryNavLink(mobileViewport);
+    syncSettingsNavLink(mobileViewport);
 
     syncUserAvatarUi();
     if (el.userName) el.userName.textContent = state.username || "debater";
@@ -2231,7 +2421,6 @@
         ? "Uploading..."
         : "Change Profile Picture";
     }
-    el.adminNavLink?.classList.toggle("hidden", !currentIsAdmin());
     if (el.headerRankedCount) el.headerRankedCount.textContent = model.myRank > 0 ? String(model.myRank) : "—";
     if (el.headerUpcomingCount) el.headerUpcomingCount.textContent = String(model.upcoming.length);
     const activeNavPage =
@@ -2272,6 +2461,8 @@
     switch (state.currentPage) {
       case "debate":
         return renderDebatePage(model);
+      case "search":
+        return renderSearchPage();
       case "schedule":
         return renderSchedulePage(model);
       case "archive":
@@ -2286,6 +2477,24 @@
     }
   }
 
+  function renderSearchPage() {
+    const query = String(state.searchDraft || "").trim();
+    return `
+      <section class="page-shell">
+        <section class="page-hero">
+          <div>
+            <span class="page-kicker">Search</span>
+            <h2 class="page-title">${escapeHtml(query ? `Results for "${query}"` : "Search results")}</h2>
+          </div>
+        </section>
+
+        <section class="section-panel search-results-shell">
+          ${renderSearchResultsList("search-results-panel")}
+        </section>
+      </section>
+    `;
+  }
+
   function renderMobileCurrentPage(model) {
     switch (state.currentPage) {
       case "debate":
@@ -2298,6 +2507,8 @@
         return renderMobileArchivePage(model);
       case "rankings":
         return renderMobileRankingsPage(model);
+      case "settings":
+        return renderMobileSettingsPage(model);
       case "admin":
         return renderMobileAdminPage(model);
       case "dashboard":
@@ -2657,79 +2868,124 @@
     `;
   }
 
+  function renderScheduleTabs(selectedSection) {
+    const safeSection = normalizeScheduleSection(selectedSection);
+    const tabs = [
+      { id: "new", label: "New Debate" },
+      { id: "upcoming", label: "Upcoming Debates" }
+    ];
+
+    return `
+      <div class="leaderboard-tabs schedule-tabs" role="tablist" aria-label="Schedule sections">
+        ${tabs
+          .map((tab) => {
+            const isActive = tab.id === safeSection;
+            return `
+              <button
+                class="tab-btn${isActive ? " is-active" : ""}"
+                type="button"
+                role="tab"
+                aria-selected="${isActive ? "true" : "false"}"
+                data-action="set-schedule-section"
+                data-value="${escapeHtml(tab.id)}"
+              >
+                ${escapeHtml(tab.label)}
+              </button>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  function renderMobileScheduleFormBlock() {
+    return `
+      <section class="mobile-block">
+        <form class="schedule-form" id="schedule-form">
+          <label class="field">
+            <span>Topic</span>
+            <input
+              type="text"
+              name="topic"
+              data-draft-owner="schedule"
+              data-draft-field="topic"
+              value="${escapeHtml(state.scheduleDraft.topic)}"
+              placeholder="Should cities replace cars with public transit corridors?"
+              required
+            />
+          </label>
+          ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
+          <div class="field-row">
+            ${renderDebaterSelect({
+              label: "Debater A",
+              field: "debaterAUid",
+              selectedUid: state.scheduleDraft.debaterAUid,
+              otherUid: state.scheduleDraft.debaterBUid
+            })}
+            ${renderDebaterSelect({
+              label: "Debater B",
+              field: "debaterBUid",
+              selectedUid: state.scheduleDraft.debaterBUid,
+              otherUid: state.scheduleDraft.debaterAUid
+            })}
+          </div>
+          <label class="field">
+            <span>Date and time</span>
+            <input
+              type="datetime-local"
+              name="scheduledFor"
+              data-draft-owner="schedule"
+              data-draft-field="scheduledFor"
+              value="${escapeHtml(state.scheduleDraft.scheduledFor)}"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Moderator</span>
+            <input
+              type="text"
+              name="moderator"
+              data-draft-owner="schedule"
+              data-draft-field="moderator"
+              value="${escapeHtml(state.scheduleDraft.moderator)}"
+              placeholder="Optional moderator"
+            />
+          </label>
+          <div class="form-actions">
+            <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
+              ${state.scheduleSaving ? "Scheduling..." : "Schedule"}
+            </button>
+            <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  function renderMobileUpcomingDebatesBlock(model) {
+    return `
+      <section class="mobile-block">
+        <div class="mobile-section-head">
+          <h3>Upcoming Debates</h3>
+        </div>
+        ${renderMobileDebateList([...model.upcoming, ...model.overdue], {
+          emptyTitle: "No scheduled debates"
+        })}
+      </section>
+    `;
+  }
+
   function renderMobileSchedulePage(model) {
+    const scheduleSection = normalizeScheduleSection(state.scheduleSection);
+
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block">
           <span class="page-kicker">Schedule</span>
-          <h2 class="mobile-page-title">New debate</h2>
-          <form class="schedule-form" id="schedule-form">
-            <label class="field">
-              <span>Topic</span>
-              <input
-                type="text"
-                name="topic"
-                data-draft-owner="schedule"
-                data-draft-field="topic"
-                value="${escapeHtml(state.scheduleDraft.topic)}"
-                placeholder="Should cities replace cars with public transit corridors?"
-                required
-              />
-            </label>
-            ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
-            <div class="field-row">
-              ${renderDebaterSelect({
-                label: "Debater A",
-                field: "debaterAUid",
-                selectedUid: state.scheduleDraft.debaterAUid,
-                otherUid: state.scheduleDraft.debaterBUid
-              })}
-              ${renderDebaterSelect({
-                label: "Debater B",
-                field: "debaterBUid",
-                selectedUid: state.scheduleDraft.debaterBUid,
-                otherUid: state.scheduleDraft.debaterAUid
-              })}
-            </div>
-            <label class="field">
-              <span>Date and time</span>
-              <input
-                type="datetime-local"
-                name="scheduledFor"
-                data-draft-owner="schedule"
-                data-draft-field="scheduledFor"
-                value="${escapeHtml(state.scheduleDraft.scheduledFor)}"
-                required
-              />
-            </label>
-            <label class="field">
-              <span>Moderator</span>
-              <input
-                type="text"
-                name="moderator"
-                data-draft-owner="schedule"
-                data-draft-field="moderator"
-                value="${escapeHtml(state.scheduleDraft.moderator)}"
-                placeholder="Optional moderator"
-              />
-            </label>
-            <div class="form-actions">
-              <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
-                ${state.scheduleSaving ? "Scheduling..." : "Schedule"}
-              </button>
-              <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
-            </div>
-          </form>
+          <h2 class="mobile-page-title">Schedule</h2>
+          ${renderScheduleTabs(scheduleSection)}
         </section>
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Board</h3>
-          </div>
-          ${renderMobileDebateList([...model.upcoming, ...model.overdue], {
-            emptyTitle: "No scheduled debates"
-          })}
-        </section>
+        ${scheduleSection === "upcoming" ? renderMobileUpcomingDebatesBlock(model) : renderMobileScheduleFormBlock()}
       </section>
     `;
   }
@@ -2761,122 +3017,249 @@
     `;
   }
 
-  function renderMobileAdminPage(model) {
-    if (!currentIsAdmin()) {
-      return `
-        <section class="page-shell mobile-page">
-          <section class="mobile-block">
-            <span class="page-kicker">Admin</span>
-            <h3><code>admin</code> only.</h3>
-          </section>
-        </section>
-      `;
-    }
+  function renderMobileSettingsRoot(model) {
+    const items = [
+      {
+        section: "profile",
+        title: "Profile Settings",
+        copy: "Light mode, username, password, avatar, and logout."
+      }
+    ];
 
-    const lazyDraft = state.lazyDebateDraft;
+    if (currentIsAdmin()) {
+      items.push(
+        {
+          section: "awaiting",
+          title: "Awaiting Results",
+          copy: model.unresolvedQueue.length
+            ? `${model.unresolvedQueue.length} debate${model.unresolvedQueue.length === 1 ? "" : "s"} waiting.`
+            : "Nothing is waiting on admin."
+        },
+        {
+          section: "lazy",
+          title: "Too Lazy Debates",
+          copy: "Log a finished debate directly."
+        },
+        {
+          section: "users",
+          title: "Users",
+          copy: "Search and manage user accounts."
+        }
+      );
+    }
 
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block">
-          <span class="page-kicker">Admin</span>
-          <h2 class="mobile-page-title">Resolve debates</h2>
-          ${renderMobileDebateList(model.unresolvedQueue, {
-            emptyTitle: "Nothing is waiting on admin",
-            showAdminControls: true
-          })}
-        </section>
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Too Lazy debates</h3>
+          <span class="page-kicker">Settings</span>
+          <h2 class="mobile-page-title">Settings</h2>
+          <div class="mobile-settings-stack">
+            ${items
+              .map((item) => {
+                return `
+                  <button
+                    class="mobile-settings-tab"
+                    type="button"
+                    data-action="open-settings-section"
+                    data-settings-section="${escapeHtml(item.section)}"
+                  >
+                    <strong>${escapeHtml(item.title)}</strong>
+                    <span>${escapeHtml(item.copy)}</span>
+                  </button>
+                `;
+              })
+              .join("")}
           </div>
-          <form class="schedule-form" id="lazy-debate-form">
-            <label class="field">
-              <span>Topic</span>
-              <input
-                type="text"
-                name="topic"
-                data-draft-owner="lazy"
-                data-draft-field="topic"
-                value="${escapeHtml(lazyDraft.topic)}"
-                placeholder="Should group projects count less?"
-                required
-              />
-            </label>
-            ${renderDebateCategorySelect("lazy", lazyDraft.category)}
-            <div class="field-row">
-              ${renderDebaterSelect({
-                label: "Debater A",
-                field: "debaterAUid",
-                selectedUid: lazyDraft.debaterAUid,
-                otherUid: lazyDraft.debaterBUid,
-                owner: "lazy"
-              })}
-              ${renderDebaterSelect({
-                label: "Debater B",
-                field: "debaterBUid",
-                selectedUid: lazyDraft.debaterBUid,
-                otherUid: lazyDraft.debaterAUid,
-                owner: "lazy"
-              })}
-            </div>
-            <label class="field">
-              <span>Date and time</span>
-              <input
-                type="datetime-local"
-                name="scheduledFor"
-                data-draft-owner="lazy"
-                data-draft-field="scheduledFor"
-                value="${escapeHtml(lazyDraft.scheduledFor)}"
-                required
-              />
-            </label>
-            <label class="field">
-              <span>Moderator</span>
-              <input
-                type="text"
-                name="moderator"
-                data-draft-owner="lazy"
-                data-draft-field="moderator"
-                value="${escapeHtml(lazyDraft.moderator)}"
-                placeholder="Optional moderator"
-              />
-            </label>
-            <label class="field">
-              <span>YouTube link</span>
-              <input
-                type="url"
-                name="videoUrl"
-                data-draft-owner="lazy"
-                data-draft-field="videoUrl"
-                value="${escapeHtml(lazyDraft.videoUrl)}"
-                placeholder="Optional YouTube link"
-              />
-            </label>
-            <div class="field">
-              <span>Winner</span>
-              <input type="hidden" name="result" value="${escapeHtml(lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a")}" />
-              <div class="winner-picker">
-                ${renderLazyWinnerButtons()}
-              </div>
-            </div>
-            <div class="form-actions">
-              <button class="primary-btn" type="submit" ${state.adminLogSaving ? "disabled" : ""}>
-                ${state.adminLogSaving ? "Logging..." : "Log debate"}
-              </button>
-              <button class="ghost-btn" type="button" data-action="reset-lazy-form">Reset</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Users</h3>
-          </div>
-          ${renderAdminUserList()}
         </section>
       </section>
     `;
+  }
+
+  function renderMobileSettingsSectionShell(title, content) {
+    return `
+      <section class="page-shell mobile-page">
+        <section class="mobile-block">
+          <div class="mobile-settings-head">
+            <button
+              class="ghost-btn mobile-settings-back"
+              type="button"
+              data-action="open-settings-section"
+              data-settings-section="root"
+            >
+              Back
+            </button>
+            <div class="mobile-settings-title">
+              <span class="page-kicker">Settings</span>
+              <h2 class="mobile-page-title">${escapeHtml(title)}</h2>
+            </div>
+          </div>
+          ${content}
+        </section>
+      </section>
+    `;
+  }
+
+  function renderMobileProfileSettingsPage() {
+    const themeLabel = state.themeMode === "dark" ? "Light Mode" : "Dark Mode";
+
+    return renderMobileSettingsSectionShell(
+      "Profile Settings",
+      `
+        <div class="mobile-settings-stack">
+          <button class="mobile-settings-tab" type="button" data-action="mobile-open-own-profile">
+            <strong>Open Profile</strong>
+            <span>View your profile page.</span>
+          </button>
+          <button class="mobile-settings-tab" type="button" data-action="mobile-toggle-theme">
+            <strong>${escapeHtml(themeLabel)}</strong>
+            <span>Switch the app appearance.</span>
+          </button>
+          <button class="mobile-settings-tab" type="button" data-action="mobile-change-username">
+            <strong>Change Username</strong>
+            <span>Update the name shown across debates and rankings.</span>
+          </button>
+          <button class="mobile-settings-tab" type="button" data-action="mobile-change-avatar">
+            <strong>Change Profile Picture</strong>
+            <span>Upload a new avatar.</span>
+          </button>
+          <button class="mobile-settings-tab" type="button" data-action="mobile-change-password">
+            <strong>Change Password</strong>
+            <span>Set a new password for this account.</span>
+          </button>
+          <button class="mobile-settings-tab is-danger" type="button" data-action="mobile-log-out">
+            <strong>Log Out</strong>
+            <span>Sign out of DialecticHub.</span>
+          </button>
+        </div>
+      `
+    );
+  }
+
+  function renderMobileAwaitingResultsPage(model) {
+    return renderMobileSettingsSectionShell(
+      "Awaiting Results",
+      renderMobileDebateList(model.unresolvedQueue, {
+        emptyTitle: "Nothing is waiting on admin",
+        showAdminControls: true
+      })
+    );
+  }
+
+  function renderMobileTooLazyDebatesPage() {
+    const lazyDraft = state.lazyDebateDraft;
+
+    return renderMobileSettingsSectionShell(
+      "Too Lazy Debates",
+      `
+        <form class="schedule-form" id="lazy-debate-form">
+          <label class="field">
+            <span>Topic</span>
+            <input
+              type="text"
+              name="topic"
+              data-draft-owner="lazy"
+              data-draft-field="topic"
+              value="${escapeHtml(lazyDraft.topic)}"
+              placeholder="Should group projects count less?"
+              required
+            />
+          </label>
+          ${renderDebateCategorySelect("lazy", lazyDraft.category)}
+          <div class="field-row">
+            ${renderDebaterSelect({
+              label: "Debater A",
+              field: "debaterAUid",
+              selectedUid: lazyDraft.debaterAUid,
+              otherUid: lazyDraft.debaterBUid,
+              owner: "lazy"
+            })}
+            ${renderDebaterSelect({
+              label: "Debater B",
+              field: "debaterBUid",
+              selectedUid: lazyDraft.debaterBUid,
+              otherUid: lazyDraft.debaterAUid,
+              owner: "lazy"
+            })}
+          </div>
+          <label class="field">
+            <span>Date and time</span>
+            <input
+              type="datetime-local"
+              name="scheduledFor"
+              data-draft-owner="lazy"
+              data-draft-field="scheduledFor"
+              value="${escapeHtml(lazyDraft.scheduledFor)}"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Moderator</span>
+            <input
+              type="text"
+              name="moderator"
+              data-draft-owner="lazy"
+              data-draft-field="moderator"
+              value="${escapeHtml(lazyDraft.moderator)}"
+              placeholder="Optional moderator"
+            />
+          </label>
+          <label class="field">
+            <span>YouTube link</span>
+            <input
+              type="url"
+              name="videoUrl"
+              data-draft-owner="lazy"
+              data-draft-field="videoUrl"
+              value="${escapeHtml(lazyDraft.videoUrl)}"
+              placeholder="Optional YouTube link"
+            />
+          </label>
+          <div class="field">
+            <span>Winner</span>
+            <input type="hidden" name="result" value="${escapeHtml(lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a")}" />
+            <div class="winner-picker">
+              ${renderLazyWinnerButtons()}
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="primary-btn" type="submit" ${state.adminLogSaving ? "disabled" : ""}>
+              ${state.adminLogSaving ? "Logging..." : "Log debate"}
+            </button>
+            <button class="ghost-btn" type="button" data-action="reset-lazy-form">Reset</button>
+          </div>
+        </form>
+      `
+    );
+  }
+
+  function renderMobileUsersSettingsPage() {
+    return renderMobileSettingsSectionShell("Users", renderAdminUserList());
+  }
+
+  function renderMobileSettingsPage(model) {
+    const section = normalizeSettingsSection(state.settingsSection);
+
+    if (section === "profile") {
+      return renderMobileProfileSettingsPage();
+    }
+
+    if (currentIsAdmin()) {
+      if (section === "awaiting") {
+        return renderMobileAwaitingResultsPage(model);
+      }
+      if (section === "lazy") {
+        return renderMobileTooLazyDebatesPage();
+      }
+      if (section === "users") {
+        return renderMobileUsersSettingsPage();
+      }
+    }
+
+    return renderMobileSettingsRoot(model);
+  }
+
+  function renderMobileAdminPage(model) {
+    return renderMobileSettingsPage(model);
   }
 
   function renderDashboardPage(model) {
@@ -3137,109 +3520,120 @@
     `;
   }
 
+  function renderScheduleFormPanel() {
+    return `
+      <section class="section-panel">
+        <div class="section-header">
+          <div>
+            <h3 class="section-title">New Debate</h3>
+          </div>
+        </div>
+        <form class="schedule-form" id="schedule-form">
+          <label class="field">
+            <span>Topic or resolution</span>
+            <input
+              type="text"
+              name="topic"
+              data-draft-owner="schedule"
+              data-draft-field="topic"
+              value="${escapeHtml(state.scheduleDraft.topic)}"
+              placeholder="Should cities replace cars with public transit corridors?"
+              required
+            />
+          </label>
+          <div class="field-row">
+            ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
+            <label class="field">
+              <span>Date and time</span>
+              <input
+                type="datetime-local"
+                name="scheduledFor"
+                data-draft-owner="schedule"
+                data-draft-field="scheduledFor"
+                value="${escapeHtml(state.scheduleDraft.scheduledFor)}"
+                required
+              />
+            </label>
+          </div>
+          <div class="field-row">
+            ${renderDebaterSelect({
+              label: "Debater A",
+              field: "debaterAUid",
+              selectedUid: state.scheduleDraft.debaterAUid,
+              otherUid: state.scheduleDraft.debaterBUid
+            })}
+            ${renderDebaterSelect({
+              label: "Debater B",
+              field: "debaterBUid",
+              selectedUid: state.scheduleDraft.debaterBUid,
+              otherUid: state.scheduleDraft.debaterAUid
+            })}
+          </div>
+          <label class="field">
+            <span>Moderator</span>
+            <input
+              type="text"
+              name="moderator"
+              data-draft-owner="schedule"
+              data-draft-field="moderator"
+              value="${escapeHtml(state.scheduleDraft.moderator)}"
+              placeholder="Optional moderator or judge name"
+            />
+          </label>
+          <label class="field">
+            <span>Description</span>
+            <textarea
+              name="description"
+              data-draft-owner="schedule"
+              data-draft-field="description"
+              placeholder="Short framing note, context, or judging criteria."
+            >${escapeHtml(state.scheduleDraft.description)}</textarea>
+          </label>
+          <div class="form-actions">
+            <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
+              ${state.scheduleSaving ? "Scheduling..." : "Schedule debate"}
+            </button>
+            <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  function renderUpcomingDebatesPanel(model) {
+    return `
+      <section class="section-panel">
+        <div class="section-header">
+          <div>
+            <h3 class="section-title">Upcoming Debates</h3>
+          </div>
+        </div>
+        ${renderScrollablePanel(
+          renderDebateList([...model.upcoming, ...model.overdue], {
+            emptyTitle: "No scheduled debates",
+            emptyCopy: "",
+            showAdminControls: currentIsAdmin()
+          }),
+          "is-feed"
+        )}
+      </section>
+    `;
+  }
+
   function renderSchedulePage(model) {
+    const scheduleSection = normalizeScheduleSection(state.scheduleSection);
+
     return `
       <section class="page-shell">
         <section class="page-hero">
           <div>
             <span class="page-kicker">Schedule Debate</span>
-            <h2 class="page-title">New debate</h2>
+            <h2 class="page-title">Schedule</h2>
           </div>
+          ${renderScheduleTabs(scheduleSection)}
         </section>
 
-        <section class="section-grid schedule-form-grid">
-          <section class="section-panel">
-            <div class="section-header">
-              <div>
-                <h3 class="section-title">New debate</h3>
-              </div>
-            </div>
-            <form class="schedule-form" id="schedule-form">
-              <label class="field">
-                <span>Topic or resolution</span>
-                <input
-                  type="text"
-                  name="topic"
-                  data-draft-owner="schedule"
-                  data-draft-field="topic"
-                  value="${escapeHtml(state.scheduleDraft.topic)}"
-                  placeholder="Should cities replace cars with public transit corridors?"
-                  required
-                />
-              </label>
-              <div class="field-row">
-                ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
-                <label class="field">
-                  <span>Date and time</span>
-                  <input
-                    type="datetime-local"
-                    name="scheduledFor"
-                    data-draft-owner="schedule"
-                    data-draft-field="scheduledFor"
-                    value="${escapeHtml(state.scheduleDraft.scheduledFor)}"
-                    required
-                  />
-                </label>
-              </div>
-              <div class="field-row">
-                ${renderDebaterSelect({
-                  label: "Debater A",
-                  field: "debaterAUid",
-                  selectedUid: state.scheduleDraft.debaterAUid,
-                  otherUid: state.scheduleDraft.debaterBUid
-                })}
-                ${renderDebaterSelect({
-                  label: "Debater B",
-                  field: "debaterBUid",
-                  selectedUid: state.scheduleDraft.debaterBUid,
-                  otherUid: state.scheduleDraft.debaterAUid
-                })}
-              </div>
-              <label class="field">
-                <span>Moderator</span>
-                <input
-                  type="text"
-                  name="moderator"
-                  data-draft-owner="schedule"
-                  data-draft-field="moderator"
-                  value="${escapeHtml(state.scheduleDraft.moderator)}"
-                  placeholder="Optional moderator or judge name"
-                />
-              </label>
-              <label class="field">
-                <span>Description</span>
-                <textarea
-                  name="description"
-                  data-draft-owner="schedule"
-                  data-draft-field="description"
-                  placeholder="Short framing note, context, or judging criteria."
-                >${escapeHtml(state.scheduleDraft.description)}</textarea>
-              </label>
-              <div class="form-actions">
-                <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
-                  ${state.scheduleSaving ? "Scheduling..." : "Schedule debate"}
-                </button>
-                <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
-              </div>
-            </form>
-          </section>
-
-          <section class="section-panel">
-            <div class="section-header">
-              <div>
-                <h3 class="section-title">Upcoming board</h3>
-              </div>
-            </div>
-            ${renderScrollablePanel(
-              renderDebateList([...model.upcoming, ...model.overdue], {
-                emptyTitle: "No scheduled debates",
-                emptyCopy: "",
-                showAdminControls: currentIsAdmin()
-              }),
-              "is-feed"
-            )}
-          </section>
-        </section>
+        ${scheduleSection === "upcoming" ? renderUpcomingDebatesPanel(model) : renderScheduleFormPanel()}
       </section>
     `;
   }
@@ -3663,17 +4057,23 @@
     `;
   }
 
-  function renderAdminUserList() {
-    const users = getAdminManagedUsers();
-    if (!users.length) {
-      return renderEmptyState("No users yet", "");
+  function renderAdminUserCards(users, query = state.adminUserSearchDraft) {
+    const list = Array.isArray(users) ? users : [];
+    if (!list.length) {
+      return renderEmptyState(
+        String(query || "").trim() ? "No matching users" : "No users yet",
+        String(query || "").trim() ? "Try another username or uid." : ""
+      );
     }
 
     return `
       <div class="admin-user-list">
-        ${users
+        ${list
           .map((entry) => {
             const safeUid = String(entry.uid || "").trim();
+            const role = normalizeUserRole(entry.role, "user");
+            const isAdminRole = role === "admin";
+            const busy = state.actionBusyKey === `${safeUid}:role`;
             return `
               <article class="admin-user-card">
                 <div class="admin-user-head">
@@ -3685,8 +4085,20 @@
                     })}
                     <span class="admin-user-meta">${escapeHtml(safeUid)}</span>
                   </div>
+                  <span class="admin-user-status${isAdminRole ? " is-admin" : ""}">
+                    ${isAdminRole ? "Admin" : "User"}
+                  </span>
                 </div>
                 <div class="admin-user-actions">
+                  <button
+                    class="secondary-btn"
+                    type="button"
+                    data-action="admin-change-status"
+                    data-profile-uid="${escapeHtml(safeUid)}"
+                    ${busy ? "disabled" : ""}
+                  >
+                    ${busy ? "Saving..." : "Change Status"}
+                  </button>
                   <button
                     class="secondary-btn"
                     type="button"
@@ -3718,6 +4130,55 @@
           .join("")}
       </div>
     `;
+  }
+
+  function renderAdminUserList() {
+    const query = String(state.adminUserSearchDraft || "");
+    const users = getFilteredAdminManagedUsers(query);
+
+    return `
+      <div class="admin-user-manager">
+        <label class="search-field admin-user-search-field" for="admin-user-search-input">
+          <span class="search-label">Search</span>
+          <input
+            id="admin-user-search-input"
+            type="search"
+            data-admin-user-search="true"
+            value="${escapeHtml(query)}"
+            placeholder="Username or uid..."
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+          />
+          <button
+            class="search-clear${query ? "" : " hidden"}"
+            type="button"
+            data-action="clear-admin-user-search"
+            aria-label="Clear admin user search"
+          >
+            &times;
+          </button>
+        </label>
+        <div class="admin-user-search-results" id="admin-user-search-results">
+          ${renderAdminUserCards(users, query)}
+        </div>
+      </div>
+    `;
+  }
+
+  function syncAdminUserSearchUi() {
+    const input = el.mainContent?.querySelector("#admin-user-search-input");
+    const results = el.mainContent?.querySelector("#admin-user-search-results");
+    if (!(input instanceof HTMLInputElement) || !results) return false;
+
+    if (input.value !== state.adminUserSearchDraft) {
+      input.value = state.adminUserSearchDraft;
+    }
+
+    results.innerHTML = renderAdminUserCards(getFilteredAdminManagedUsers(), state.adminUserSearchDraft);
+    const clearButton = input.closest(".admin-user-search-field")?.querySelector('[data-action="clear-admin-user-search"]');
+    clearButton?.classList.toggle("hidden", !String(state.adminUserSearchDraft || "").trim());
+    return true;
   }
 
   let queueHeightFrame = 0;
@@ -4733,6 +5194,66 @@
     });
   }
 
+  async function toggleAdminManagedUserStatus(uid) {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid || !currentIsAdmin() || !state.user) return;
+
+    const currentRole = getUserRoleForUid(safeUid);
+    const nextRole = currentRole === "admin" ? "user" : "admin";
+    const safeName = normalizeUsername(getNameForUid(safeUid, "debater")) || "that user";
+    const confirmed = window.confirm(
+      `Change ${safeName} from ${currentRole === "admin" ? "Admin" : "User"} to ${nextRole === "admin" ? "Admin" : "User"}?`
+    );
+    if (!confirmed) return;
+
+    state.actionBusyKey = `${safeUid}:role`;
+    renderApp({ preserveScroll: true });
+
+    try {
+      if (isPreviewMode()) {
+        if (safeUid === String(state.user.uid || "").trim()) {
+          state.selfProfile = {
+            ...(state.selfProfile || {}),
+            role: nextRole
+          };
+        }
+        state.userProfiles = state.userProfiles.some((entry) => String(entry.uid || "").trim() === safeUid)
+          ? state.userProfiles.map((entry) =>
+              String(entry.uid || "").trim() === safeUid ? { ...entry, role: nextRole } : entry
+            )
+          : [...state.userProfiles, { uid: safeUid, role: nextRole }];
+      } else {
+        await db.collection("users").doc(safeUid).set(
+          {
+            role: nextRole,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          },
+          { merge: true }
+        );
+
+        if (safeUid === String(state.user.uid || "").trim()) {
+          state.selfProfile = {
+            ...(state.selfProfile || {}),
+            role: nextRole
+          };
+        }
+        state.userProfiles = state.userProfiles.some((entry) => String(entry.uid || "").trim() === safeUid)
+          ? state.userProfiles.map((entry) =>
+              String(entry.uid || "").trim() === safeUid ? { ...entry, role: nextRole } : entry
+            )
+          : [...state.userProfiles, { uid: safeUid, role: nextRole }];
+      }
+
+      showToast(`${safeName} is now ${nextRole === "admin" ? "an admin" : "a user"}.`, "success");
+    } catch (error) {
+      console.warn("Could not change user role", error);
+      showToast("Could not change that status right now.", "error");
+    } finally {
+      state.actionBusyKey = "";
+      renderApp({ preserveScroll: true });
+    }
+  }
+
   function showAdminPasswordUnavailableMessage(uid) {
     const safeUid = String(uid || "").trim();
     if (safeUid && safeUid === String(state.user?.uid || "").trim()) {
@@ -5511,12 +6032,16 @@
       unsubscribeFromDirectory();
       unsubscribeFromDebates();
       unsubscribeFromSelfProfile();
+      unsubscribeFromAdminProfiles();
       state.username = "";
       state.profilePictureBusy = false;
       state.profilePictureTargetUid = "";
       state.profilePictureTargetName = "";
       state.selfProfile = null;
+      state.userProfiles = [];
       state.profileUid = "";
+      state.settingsSection = "root";
+      state.scheduleSection = "new";
       state.directory = [];
       state.debates = [];
       resetSearchState();
@@ -5540,9 +6065,21 @@
       state.profilePictureTargetUid = "";
       state.profilePictureTargetName = "";
       state.rankingsCategory = "";
+      state.settingsSection = "root";
+      state.scheduleSection = "new";
       state.scheduleDraft = makeDefaultScheduleDraft(String(user.uid || ""));
       state.lazyDebateDraft = makeDefaultLazyDebateDraft();
       await ensureUserDocs(user, state.username);
+      try {
+        const selfSnap = await db.collection("users").doc(String(user.uid || "")).get();
+        state.selfProfile = selfSnap.exists ? selfSnap.data() || {} : { username: state.username, name: state.username };
+      } catch (_) {
+        state.selfProfile = {
+          ...(state.selfProfile || {}),
+          username: state.username,
+          name: state.username
+        };
+      }
       try {
         await syncPublicDirectoryProfile(user, state.username, user.photoURL || "");
       } catch (error) {
@@ -6093,9 +6630,68 @@
       return;
     }
 
+    if (action === "admin-change-status") {
+      event.preventDefault();
+      toggleAdminManagedUserStatus(actionButton.getAttribute("data-profile-uid"));
+      return;
+    }
+
     if (action === "admin-change-password") {
       event.preventDefault();
       showAdminPasswordUnavailableMessage(actionButton.getAttribute("data-profile-uid"));
+      return;
+    }
+
+    if (action === "clear-admin-user-search") {
+      event.preventDefault();
+      state.adminUserSearchDraft = "";
+      if (!syncAdminUserSearchUi()) {
+        renderApp({ preserveScroll: true });
+      }
+      const input = el.mainContent?.querySelector("#admin-user-search-input");
+      window.setTimeout(() => input?.focus(), 0);
+      return;
+    }
+
+    if (action === "open-settings-section") {
+      event.preventDefault();
+      setSettingsSection(actionButton.getAttribute("data-settings-section"));
+      return;
+    }
+
+    if (action === "mobile-open-own-profile") {
+      event.preventDefault();
+      openProfile(String(state.user?.uid || "").trim());
+      return;
+    }
+
+    if (action === "mobile-toggle-theme") {
+      event.preventDefault();
+      toggleThemeMode();
+      return;
+    }
+
+    if (action === "mobile-change-username") {
+      event.preventDefault();
+      changeUsername();
+      return;
+    }
+
+    if (action === "mobile-change-avatar") {
+      event.preventDefault();
+      openProfilePicturePicker();
+      return;
+    }
+
+    if (action === "mobile-change-password") {
+      event.preventDefault();
+      changePassword();
+      return;
+    }
+
+    if (action === "mobile-log-out") {
+      event.preventDefault();
+      signOutCurrentUser();
       return;
     }
 
@@ -6176,6 +6772,12 @@
       return;
     }
 
+    if (action === "set-schedule-section") {
+      event.preventDefault();
+      setScheduleSection(actionButton.getAttribute("data-value"));
+      return;
+    }
+
     if (action === "set-rankings-category") {
       event.preventDefault();
       state.rankingsCategory = normalizeRankingsCategory(actionButton.getAttribute("data-value"));
@@ -6224,6 +6826,14 @@
   }
 
   function handleMainInput(event) {
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-admin-user-search")) {
+      state.adminUserSearchDraft = String(event.target.value || "");
+      if (!syncAdminUserSearchUi()) {
+        renderApp({ preserveScroll: true });
+      }
+      return;
+    }
+
     if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-mobile-search-input")) {
       state.searchDraft = String(event.target.value || "");
       state.searchTerm = "";
@@ -6258,10 +6868,7 @@
     if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-mobile-search-input")) {
       if (event.key === "Enter") {
         event.preventDefault();
-        const firstSuggestion = el.mainContent?.querySelector('#mobile-search-results [data-action="apply-search-suggestion"]');
-        if (firstSuggestion instanceof HTMLButtonElement) {
-          firstSuggestion.click();
-        }
+        openSearchResultsPage(event.target.value || "");
       }
       return;
     }
@@ -6313,6 +6920,7 @@
     state.currentPage = getPageFromUrl();
     state.profileUid = getProfileUidFromUrl();
     state.debateId = getDebateIdFromUrl();
+    state.settingsSection = "root";
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
@@ -6378,7 +6986,7 @@
         const hadAppliedSearch = Boolean(state.searchTerm);
         state.searchTerm = "";
         closeSearchMenu();
-        if (hadAppliedSearch) {
+        if (hadAppliedSearch || state.currentPage === "search") {
           renderApp({ preserveScroll: true });
         }
         return;
@@ -6413,11 +7021,7 @@
 
       if (event.key === "Enter") {
         event.preventDefault();
-        if (state.searchMenuOpen && state.searchSuggestions[state.searchHighlightIndex]) {
-          applySearchSuggestionByIndex(state.searchHighlightIndex);
-        } else {
-          commitSearch(state.searchDraft, state.currentPage);
-        }
+        openSearchResultsPage(state.searchDraft);
         return;
       }
 
@@ -6429,7 +7033,7 @@
     el.clearSearchBtn?.addEventListener("click", () => {
       const hadAppliedSearch = Boolean(state.searchTerm);
       resetSearchState();
-      if (hadAppliedSearch) {
+      if (hadAppliedSearch || state.currentPage === "search") {
         renderApp({ preserveScroll: true });
       } else {
         syncSearchUi();

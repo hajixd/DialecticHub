@@ -9,8 +9,47 @@ service cloud.firestore {
         : '';
     }
 
+    function storedUserRole(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        ? get(/databases/$(database)/documents/users/$(uid)).data.role
+        : '';
+    }
+
+    function hasStoredUserRole(uid) {
+      return storedUserRole(uid) == 'admin' || storedUserRole(uid) == 'user';
+    }
+
+    function bootstrapAdmin() {
+      return signedIn()
+        && request.auth.uid == adminUidFromUsername()
+        && !hasStoredUserRole(request.auth.uid);
+    }
+
     function isAdmin() {
-      return signedIn() && (request.auth.token.admin == true || request.auth.uid == adminUidFromUsername());
+      return signedIn() && (
+        request.auth.token.admin == true
+        || storedUserRole(request.auth.uid) == 'admin'
+        || bootstrapAdmin()
+      );
+    }
+
+    function validRequestedUserRole() {
+      return !request.resource.data.keys().hasAny(['role'])
+        || request.resource.data.role == 'user'
+        || request.resource.data.role == 'admin';
+    }
+
+    function selfCanWriteOwnUserDoc(uid) {
+      return signedIn()
+        && request.auth.uid == uid
+        && validRequestedUserRole()
+        && (
+          !request.resource.data.keys().hasAny(['role'])
+          || (
+            hasStoredUserRole(uid)
+            && request.resource.data.role == storedUserRole(uid)
+          )
+        );
     }
 
     match /usernames/{username} {
@@ -57,7 +96,8 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create, update: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if (isAdmin() && validRequestedUserRole()) || selfCanWriteOwnUserDoc(uid);
+      allow update: if (isAdmin() && validRequestedUserRole()) || selfCanWriteOwnUserDoc(uid);
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
