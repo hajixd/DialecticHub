@@ -2809,7 +2809,7 @@
             };
           });
           ensureScheduleDraftParticipants();
-          renderApp();
+          renderApp({ preserveScroll: true });
         },
         (error) => {
           console.warn("Could not subscribe to username directory", error);
@@ -2823,7 +2823,7 @@
     state.unsubDebates = db.collection("debates").orderBy("scheduledFor", "asc").onSnapshot(
       (snapshot) => {
         state.debates = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
-        renderApp();
+        renderApp({ preserveScroll: true });
       },
       (error) => {
         console.warn("Could not subscribe to debates", error);
@@ -3439,10 +3439,41 @@
     };
   }
 
+  function capturePanelScrollState() {
+    return [...document.querySelectorAll(".panel-scroll")].map((node, index) => ({
+      index,
+      classNames: String(node.className || "")
+        .split(/\s+/)
+        .filter(Boolean),
+      scrollTop: Number(node.scrollTop || 0),
+      scrollLeft: Number(node.scrollLeft || 0)
+    }));
+  }
+
+  function restorePanelScrollState(savedState) {
+    const states = Array.isArray(savedState) ? savedState : [];
+    if (!states.length) return;
+
+    const nodes = [...document.querySelectorAll(".panel-scroll")];
+    states.forEach((entry) => {
+      const node = nodes[Number(entry?.index)];
+      if (!(node instanceof HTMLElement)) return;
+
+      const requiredClasses = Array.isArray(entry?.classNames) ? entry.classNames.filter(Boolean) : [];
+      if (requiredClasses.length && !requiredClasses.every((className) => node.classList.contains(className))) {
+        return;
+      }
+
+      node.scrollTop = Math.max(0, Number(entry?.scrollTop || 0));
+      node.scrollLeft = Math.max(0, Number(entry?.scrollLeft || 0));
+    });
+  }
+
   function renderApp(options = {}) {
     const preserveScroll = Boolean(options.preserveScroll);
     const scrollX = preserveScroll ? window.scrollX : 0;
     const scrollY = preserveScroll ? window.scrollY : 0;
+    const panelScrollState = preserveScroll ? capturePanelScrollState() : [];
     const mobileViewport = isMobileViewport();
     state.isMobileViewport = mobileViewport;
     document.body.classList.toggle("is-mobile-app", mobileViewport);
@@ -3526,6 +3557,7 @@
           el.mainContent.style.removeProperty("min-height");
         }
         if (preserveScroll) {
+          restorePanelScrollState(panelScrollState);
           window.scrollTo(scrollX, scrollY);
         }
       });
@@ -3673,9 +3705,9 @@
           <strong class="mobile-row-title">${escapeHtml(debate.topic || "Untitled debate")}</strong>
           <div class="mobile-row-meta">${escapeHtml(formatDateTime(debate.scheduledFor))}</div>
           <div class="people-row mobile-row-people">
-            ${renderStaticPersonBadge(debate.debaterAName, { isWinner: aWinner, isLoser: aLoser })}
+            ${renderStaticPersonBadge(debate.debaterAName, debate.debaterAUid, { isWinner: aWinner, isLoser: aLoser })}
             <span class="mini-tag">vs</span>
-            ${renderStaticPersonBadge(debate.debaterBName, { isWinner: bWinner, isLoser: bLoser })}
+            ${renderStaticPersonBadge(debate.debaterBName, debate.debaterBUid, { isWinner: bWinner, isLoser: bLoser })}
           </div>
           <div class="mobile-row-foot">
             ${showStatusChip ? `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>` : ""}
@@ -3954,11 +3986,19 @@
             </article>
             <article class="mobile-stat${resultToneClass}">
               <span class="summary-label">${escapeHtml(resultDetailLabel)}</span>
-              <strong>${escapeHtml(resultDetailValue)}</strong>
+              <strong>${
+                isAwaitingReview || debate.result === "draw"
+                  ? escapeHtml(resultDetailValue)
+                  : renderInlineProfileIdentity(resultDetailValue, debate.result === "a" ? debate.debaterAUid : debate.debaterBUid)
+              }</strong>
             </article>
             <article class="mobile-stat${loserToneClass}">
               <span class="summary-label">Loser</span>
-              <strong>${escapeHtml(loserName || "N/A")}</strong>
+              <strong>${
+                loserName
+                  ? renderInlineProfileIdentity(loserName, debate.result === "a" ? debate.debaterBUid : debate.debaterAUid)
+                  : "N/A"
+              }</strong>
             </article>
           </div>
         </section>
@@ -4644,11 +4684,19 @@
             </div>
             <div class="detail-row${resultToneClass}">
               <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
-              <strong>${escapeHtml(resultDetailValue)}</strong>
+              <strong>${
+                isAwaitingReview || debate.result === "draw"
+                  ? escapeHtml(resultDetailValue)
+                  : renderInlineProfileIdentity(resultDetailValue, debate.result === "a" ? debate.debaterAUid : debate.debaterBUid)
+              }</strong>
             </div>
             <div class="detail-row${loserToneClass}">
               <span class="detail-label">Loser</span>
-              <strong>${escapeHtml(loserName || "N/A")}</strong>
+              <strong>${
+                loserName
+                  ? renderInlineProfileIdentity(loserName, debate.result === "a" ? debate.debaterBUid : debate.debaterAUid)
+                  : "N/A"
+              }</strong>
             </div>
           </div>
 
@@ -5433,7 +5481,11 @@
           </div>
           <div class="detail-row${resultToneClass}">
             <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
-            <strong>${escapeHtml(resultDetailValue)}</strong>
+            <strong>${
+              isAwaitingReview || debate.result === "draw"
+                ? escapeHtml(resultDetailValue)
+                : renderInlineProfileIdentity(resultDetailValue, debate.result === "a" ? debate.debaterAUid : debate.debaterBUid)
+            }</strong>
           </div>
         </div>
 
@@ -5592,6 +5644,15 @@
     `;
   }
 
+  function renderInlineProfileIdentity(name, uid, options = {}) {
+    return renderProfileIdentityContent(name, uid, {
+      showAvatar: true,
+      avatarClassName: String(options.avatarClassName || "profile-avatar profile-avatar-inline").trim(),
+      innerClassName: ["profile-identity-inline", options.innerClassName || ""].filter(Boolean).join(" "),
+      labelClassName: ["profile-link-strong", options.labelClassName || ""].filter(Boolean).join(" ")
+    });
+  }
+
   function renderPersonBadge(name, uid, options = {}) {
     const classes = ["person-badge"];
     const isWinner = Boolean(options?.isWinner);
@@ -5605,10 +5666,15 @@
     if (isLoser) {
       classes.push("loser");
     }
-    return renderProfileLink(name, uid, classes.join(" "));
+    return renderProfileLink(name, uid, classes.join(" "), {
+      showAvatar: true,
+      avatarClassName: "profile-avatar profile-avatar-inline",
+      innerClassName: "profile-identity-inline",
+      labelClassName: "profile-link-strong"
+    });
   }
 
-  function renderStaticPersonBadge(name, options = {}) {
+  function renderStaticPersonBadge(name, uid = "", options = {}) {
     const classes = ["person-badge"];
     if (options?.isWinner) {
       classes.push("winner");
@@ -5616,7 +5682,7 @@
     if (options?.isLoser) {
       classes.push("loser");
     }
-    return `<span class="${classes.join(" ")}">${escapeHtml(formatDisplayName(name || "debater", "Debater"))}</span>`;
+    return `<span class="${classes.join(" ")}">${renderInlineProfileIdentity(name, uid)}</span>`;
   }
 
   function getDraftFormSelector(owner = "schedule") {

@@ -2401,6 +2401,20 @@ textarea:focus {
   height: 32px;
 }
 
+.profile-avatar-inline {
+  width: 22px;
+  height: 22px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+}
+
+.profile-identity-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .profile-link:hover,
 .profile-link.is-active {
   color: var(--accent-strong);
@@ -2416,11 +2430,26 @@ textarea:focus {
 }
 
 .person-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
   min-width: 54px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
+}
+
+.person-badge .profile-link-inner,
+.person-badge .profile-identity-inline {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.person-badge .profile-link-label {
+  font-size: 14px;
+  line-height: 1.1;
 }
 
 .person-badge.me {
@@ -2499,8 +2528,14 @@ textarea:focus {
 }
 
 .detail-row strong {
+  display: block;
   color: var(--text);
   font-size: 14px;
+}
+
+.detail-row strong .profile-identity-inline {
+  display: inline-flex;
+  max-width: 100%;
 }
 
 .detail-row.is-winner {
@@ -3614,8 +3649,14 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 .is-mobile-app .mobile-row-people .person-badge {
   flex: 1 1 0;
   min-width: 0;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 0 12px;
+}
+
+.is-mobile-app .mobile-row-people .person-badge .profile-link-inner,
+.is-mobile-app .mobile-row-people .person-badge .profile-identity-inline {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .is-mobile-app .mobile-row-people .mini-tag {
@@ -3694,8 +3735,13 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   width: 100%;
 }
 
-.is-mobile-app .mobile-debate-people .profile-link-inner {
-  justify-content: center;
+.is-mobile-app .mobile-debate-people .profile-link-inner,
+.is-mobile-app .mobile-debate-people .profile-identity-inline {
+  justify-content: flex-start;
+}
+
+.is-mobile-app .mobile-stat strong .profile-identity-inline {
+  max-width: 100%;
 }
 
 .is-mobile-app .mobile-debate-people .mini-tag {
