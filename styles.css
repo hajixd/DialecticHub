@@ -1953,25 +1953,35 @@ textarea:focus {
 }
 
 .profile-history-chart-shell {
+  position: relative;
   min-width: 0;
   border: 1px solid var(--surface-divider);
   border-radius: var(--radius-sm);
   background:
     radial-gradient(circle at top, rgba(212, 176, 103, 0.1), transparent 58%),
     rgba(0, 0, 0, 0.08);
-  padding: 10px 10px 4px;
+  padding: 14px 14px 10px;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .profile-history-chart {
   display: block;
   width: 100%;
-  height: 238px;
+  height: auto;
+  aspect-ratio: 720 / 280;
   overflow: visible;
 }
 
 .profile-history-grid-line {
   stroke: var(--surface-divider);
   stroke-width: 1;
+  opacity: 0.78;
+}
+
+.profile-history-grid-line-vertical {
+  stroke-dasharray: 4 8;
+  opacity: 0.42;
 }
 
 .profile-history-axis-text {
@@ -1990,18 +2000,104 @@ textarea:focus {
   stop-opacity: 0.02;
 }
 
+.profile-history-area {
+  opacity: 0.96;
+}
+
 .profile-history-line {
   fill: none;
   stroke: var(--accent-strong);
-  stroke-width: 3;
+  stroke-width: 3.25;
   stroke-linecap: round;
   stroke-linejoin: round;
+  filter: drop-shadow(0 6px 18px rgba(212, 176, 103, 0.12));
+}
+
+.profile-history-focus-line {
+  stroke: rgba(212, 176, 103, 0.34);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 7;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.profile-history-point-halo {
+  fill: rgba(212, 176, 103, 0.2);
+  opacity: 0;
+  transition: opacity 150ms ease;
 }
 
 .profile-history-point {
   fill: var(--panel);
   stroke: var(--accent-strong);
-  stroke-width: 2;
+  stroke-width: 2.5;
+  transition: fill 150ms ease, stroke 150ms ease, transform 150ms ease;
+}
+
+.profile-history-hit-area {
+  fill: transparent;
+  stroke: transparent;
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.profile-history-hit-area:focus-visible {
+  outline: none;
+}
+
+.profile-history-point-group.is-active .profile-history-focus-line,
+.profile-history-point-group.is-active .profile-history-point-halo {
+  opacity: 1;
+}
+
+.profile-history-point-group.is-active .profile-history-point {
+  fill: var(--accent-strong);
+  stroke: var(--panel);
+}
+
+.profile-history-tooltip {
+  position: absolute;
+  left: var(--profile-history-tooltip-x, 50%);
+  top: var(--profile-history-tooltip-y, 50%);
+  z-index: 2;
+  min-width: 148px;
+  max-width: min(220px, calc(100% - 16px));
+  padding: 10px 12px;
+  border: 1px solid rgba(212, 176, 103, 0.34);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, rgba(24, 24, 24, 0.96), rgba(12, 12, 12, 0.96));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.24);
+  display: grid;
+  gap: 4px;
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, calc(-100% - 18px));
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.profile-history-tooltip.is-visible {
+  opacity: 1;
+}
+
+.profile-history-chart-shell.is-tooltip-left .profile-history-tooltip {
+  transform: translate(calc(-100% + 22px), calc(-100% - 18px));
+}
+
+.profile-history-chart-shell.is-tooltip-right .profile-history-tooltip {
+  transform: translate(-22px, calc(-100% - 18px));
+}
+
+.profile-history-tooltip-date,
+.profile-history-tooltip-meta {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.profile-history-tooltip-rating {
+  color: var(--accent-strong);
+  font-size: 1.15rem;
+  line-height: 1.1;
 }
 
 .profile-history-empty {
@@ -2209,6 +2305,27 @@ textarea:focus {
 
 .section-copy {
   margin: 0;
+}
+
+.is-disabled-panel {
+  opacity: 0.48;
+}
+
+.is-disabled-panel .section-copy,
+.is-disabled-panel .disabled-panel-copy {
+  color: var(--text-dim);
+}
+
+.disabled-panel-copy {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  text-align: center;
 }
 
 .debate-list,
@@ -3643,11 +3760,21 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 }
 
 .is-mobile-app .profile-history-chart-shell {
-  padding: 8px 8px 2px;
+  padding: 10px 10px 8px;
 }
 
 .is-mobile-app .profile-history-chart {
-  height: 208px;
+  aspect-ratio: 720 / 304;
+}
+
+.is-mobile-app .profile-history-tooltip {
+  min-width: 132px;
+  max-width: min(186px, calc(100% - 12px));
+  padding: 9px 10px;
+}
+
+.is-mobile-app .profile-history-tooltip-rating {
+  font-size: 1.02rem;
 }
 
 .is-mobile-app .profile-history-empty {

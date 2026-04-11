@@ -36,8 +36,9 @@
   const VIDEO_CLIP_DEFAULT_END_SECONDS = 10 * 60;
   const PLACEHOLDER_UID_PREFIX = "invite:";
   const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
-  const ELO_BASELINE = 1400;
+  const ELO_BASELINE = 1100;
   const MIN_RANKED_DEBATES = 3;
+  const PLACEMENT_GAME_WEIGHT = 2;
   const FIDE_NEW_PLAYER_K = 40;
   const FIDE_STANDARD_K = 20;
   const FIDE_MASTER_K = 10;
@@ -1172,13 +1173,9 @@
       el.adminNavLink.textContent = "Admin";
     }
     el.adminNavLink.classList.remove("hidden");
-    el.adminNavLink.classList.toggle("is-disabled", !currentIsAdmin());
-    el.adminNavLink.setAttribute("aria-disabled", currentIsAdmin() ? "false" : "true");
-    if (currentIsAdmin()) {
-      el.adminNavLink.removeAttribute("tabindex");
-    } else {
-      el.adminNavLink.setAttribute("tabindex", "-1");
-    }
+    el.adminNavLink.classList.remove("is-disabled");
+    el.adminNavLink.setAttribute("aria-disabled", "false");
+    el.adminNavLink.removeAttribute("tabindex");
   }
 
   function openProfile(uid) {
@@ -2089,6 +2086,11 @@
     }
 
     return kFactor;
+  }
+
+  function getPlacementGameWeight(completedDebates) {
+    const safeCompletedDebates = Math.max(0, Number(completedDebates) || 0);
+    return safeCompletedDebates < MIN_RANKED_DEBATES ? PLACEMENT_GAME_WEIGHT : 1;
   }
 
   function makeDefaultScheduleDraft(currentUid) {
@@ -3255,14 +3257,14 @@
         const scoreB = 1 - scoreA;
         teamAPlayers.forEach((player) => {
           const playerChange = getPeriodChange(player.uid);
-          playerChange.deltaSum += scoreA - expectedA;
+          playerChange.deltaSum += (scoreA - expectedA) * getPlacementGameWeight(player.debates);
           playerChange.games += 1;
           player.debates += 1;
           player.lastDebateAt = Math.max(player.lastDebateAt, debateMillis);
         });
         teamBPlayers.forEach((player) => {
           const playerChange = getPeriodChange(player.uid);
-          playerChange.deltaSum += scoreB - expectedB;
+          playerChange.deltaSum += (scoreB - expectedB) * getPlacementGameWeight(player.debates);
           playerChange.games += 1;
           player.debates += 1;
           player.lastDebateAt = Math.max(player.lastDebateAt, debateMillis);
@@ -3574,11 +3576,6 @@
 
     syncAdminProfilesSubscription();
 
-    if (!currentIsAdmin() && state.currentPage === "admin") {
-      setPage("dashboard", { replace: true });
-      return;
-    }
-
     if (mobileViewport && state.currentPage === "admin") {
       setPage("settings", { replace: true });
       return;
@@ -3637,6 +3634,7 @@
     el.mainContent?.querySelectorAll(".video-link-fields").forEach((node) => {
       syncVideoLinkFieldsUi(node);
     });
+    syncProfileHistoryCharts();
     syncQueuePanelHeight();
 
     if (preserveScroll || releaseMobileMainContentHeight) {
@@ -5022,7 +5020,6 @@
               <span class="page-kicker">Past Debates</span>
               <h2 class="page-title">Archive</h2>
             </div>
-            ${renderArchiveEditButton()}
           </div>
         </section>
 
@@ -5076,9 +5073,35 @@
     if (!currentIsAdmin()) {
       return `
         <section class="page-shell">
-          <section class="unauthorized-panel">
-            <span class="page-kicker">Admin</span>
-            <h3><code>admin</code> only.</h3>
+          <section class="page-hero">
+            <div>
+              <span class="page-kicker">Admin</span>
+              <h2 class="page-title">Log Debates</h2>
+            </div>
+          </section>
+
+          <section class="section-grid">
+            <section class="section-panel is-disabled-panel" aria-disabled="true">
+              <div class="section-header">
+                <div>
+                  <h3 class="section-title">Awaiting Results</h3>
+                  <p class="section-copy">Admin only</p>
+                </div>
+              </div>
+              <div class="disabled-panel-copy">
+                Submitted debates appear here for admins to accept or reject.
+              </div>
+            </section>
+
+            <section class="section-panel">
+              <div class="section-header">
+                <div>
+                  <h3 class="section-title">Log Debates</h3>
+                  <p class="section-copy">Submit a finished debate for admin review.</p>
+                </div>
+              </div>
+              ${renderLogDebateFormMarkup()}
+            </section>
           </section>
         </section>
       `;
@@ -6279,11 +6302,11 @@
     }
 
     const chartWidth = 720;
-    const chartHeight = 238;
-    const paddingTop = 18;
-    const paddingRight = 18;
-    const paddingBottom = 34;
-    const paddingLeft = 48;
+    const chartHeight = 280;
+    const paddingTop = 24;
+    const paddingRight = 24;
+    const paddingBottom = 46;
+    const paddingLeft = 54;
     const innerWidth = chartWidth - paddingLeft - paddingRight;
     const innerHeight = chartHeight - paddingTop - paddingBottom;
     const ratingValues = safeHistory.map((point) => roundHalfAwayFromZero(point.ratingRounded ?? point.rating));
@@ -6326,22 +6349,38 @@
       points.length > 1
         ? `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${(paddingTop + innerHeight).toFixed(2)} L ${points[0].x.toFixed(2)} ${(paddingTop + innerHeight).toFixed(2)} Z`
         : "";
-    const yTicks = [maxRating, roundHalfAwayFromZero((maxRating + minRating) / 2), minRating];
+    const tickCount = 4;
+    const yTicks = [...new Set(
+      Array.from({ length: tickCount }, (_, index) => {
+        if (tickCount === 1) return maxRating;
+        const ratio = index / (tickCount - 1);
+        return roundHalfAwayFromZero(maxRating - ((maxRating - minRating) * ratio));
+      })
+    )];
     const labelIndexes =
       points.length === 1 ? [0] : points.length === 2 ? [0, 1] : [0, Math.floor((points.length - 1) / 2), points.length - 1];
     const uniqueLabelIndexes = [...new Set(labelIndexes)];
+    const gradientId = `profile-history-fill-${String(options.categoryLabel || "category")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-") || "category"}-${Math.abs(firstAt)}-${safeHistory.length}`;
 
     return `
-      <div class="profile-history-chart-shell">
+      <div class="profile-history-chart-shell" data-profile-history-chart="true">
+        <div class="profile-history-tooltip" data-profile-history-tooltip="true" aria-live="polite">
+          <span class="profile-history-tooltip-date" data-profile-history-tooltip-date="true"></span>
+          <strong class="profile-history-tooltip-rating" data-profile-history-tooltip-rating="true"></strong>
+          <span class="profile-history-tooltip-meta" data-profile-history-tooltip-meta="true"></span>
+        </div>
         <svg
           class="profile-history-chart"
           viewBox="0 0 ${chartWidth} ${chartHeight}"
           role="img"
           aria-label="${escapeHtml(options.categoryLabel || "Category")} ELO history"
-          preserveAspectRatio="none"
+          preserveAspectRatio="xMidYMid meet"
         >
           <defs>
-            <linearGradient id="profile-history-fill" x1="0%" x2="0%" y1="0%" y2="100%">
+            <linearGradient id="${escapeHtml(gradientId)}" x1="0%" x2="0%" y1="0%" y2="100%">
               <stop offset="0%" class="profile-history-gradient-start"></stop>
               <stop offset="100%" class="profile-history-gradient-end"></stop>
             </linearGradient>
@@ -6355,25 +6394,78 @@
               `;
             })
             .join("")}
+          ${uniqueLabelIndexes
+            .map((index) => {
+              const point = points[index];
+              return `
+                <line
+                  class="profile-history-grid-line profile-history-grid-line-vertical"
+                  x1="${point.x}"
+                  y1="${paddingTop}"
+                  x2="${point.x}"
+                  y2="${paddingTop + innerHeight}"
+                ></line>
+              `;
+            })
+            .join("")}
           ${
             areaPath
-              ? `<path class="profile-history-area" d="${areaPath}" fill="url(#profile-history-fill)"></path>`
+              ? `<path class="profile-history-area" d="${areaPath}" fill="url(#${escapeHtml(gradientId)})"></path>`
               : ""
           }
           ${points.length > 1 ? `<path class="profile-history-line" d="${linePath}"></path>` : ""}
           ${points
-            .map((point) => {
+            .map((point, index) => {
+              const previousPoint = index > 0 ? points[index - 1] : null;
+              const delta = previousPoint ? point.displayRating - previousPoint.displayRating : 0;
+              const deltaLabel = previousPoint
+                ? delta === 0
+                  ? "No change from previous"
+                  : `${delta > 0 ? "+" : ""}${delta} from previous`
+                : "Starting point";
               return `
-                <circle class="profile-history-point" cx="${point.x}" cy="${point.y}" r="4.5"></circle>
-                <title>${escapeHtml(`${formatShortDate(point.at)} - ${point.displayRating}`)}</title>
+                <g class="profile-history-point-group" data-chart-point-group="${index}">
+                  <line
+                    class="profile-history-focus-line"
+                    x1="${point.x}"
+                    y1="${paddingTop}"
+                    x2="${point.x}"
+                    y2="${paddingTop + innerHeight}"
+                  ></line>
+                  <circle class="profile-history-point-halo" cx="${point.x}" cy="${point.y}" r="8.5"></circle>
+                  <circle class="profile-history-point" cx="${point.x}" cy="${point.y}" r="5.25"></circle>
+                  <circle
+                    class="profile-history-hit-area"
+                    cx="${point.x}"
+                    cy="${point.y}"
+                    r="18"
+                    tabindex="0"
+                    focusable="true"
+                    role="button"
+                    aria-label="${escapeHtml(`${formatRelativeStamp(point.at)} — ${point.displayRating}`)}"
+                    data-chart-point-index="${index}"
+                    data-chart-ratio-x="${(point.x / chartWidth).toFixed(6)}"
+                    data-chart-ratio-y="${(point.y / chartHeight).toFixed(6)}"
+                    data-chart-date="${escapeHtml(formatRelativeStamp(point.at))}"
+                    data-chart-rating="${escapeHtml(String(point.displayRating))}"
+                    data-chart-meta="${escapeHtml(deltaLabel)}"
+                  ></circle>
+                </g>
               `;
             })
             .join("")}
           ${uniqueLabelIndexes
             .map((index) => {
               const point = points[index];
+              const anchor = point.x <= paddingLeft + 24 ? "start" : point.x >= chartWidth - paddingRight - 24 ? "end" : "middle";
+              const labelX =
+                anchor === "start"
+                  ? point.x + 4
+                  : anchor === "end"
+                    ? point.x - 4
+                    : point.x;
               return `
-                <text class="profile-history-axis-text" x="${point.x}" y="${chartHeight - 8}" text-anchor="middle">
+                <text class="profile-history-axis-text" x="${labelX}" y="${chartHeight - 10}" text-anchor="${anchor}">
                   ${escapeHtml(formatShortDate(point.at))}
                 </text>
               `;
@@ -6382,6 +6474,123 @@
         </svg>
       </div>
     `;
+  }
+
+  function setActiveProfileHistoryPoint(chartRoot, index) {
+    if (!(chartRoot instanceof HTMLElement)) return false;
+    const pointNodes = Array.from(chartRoot.querySelectorAll("[data-chart-point-index]"));
+    const tooltip = chartRoot.querySelector("[data-profile-history-tooltip]");
+    const tooltipDate = chartRoot.querySelector("[data-profile-history-tooltip-date]");
+    const tooltipRating = chartRoot.querySelector("[data-profile-history-tooltip-rating]");
+    const tooltipMeta = chartRoot.querySelector("[data-profile-history-tooltip-meta]");
+    const svg = chartRoot.querySelector(".profile-history-chart");
+
+    if (!pointNodes.length || !(tooltip instanceof HTMLElement) || !(svg instanceof SVGElement)) {
+      return false;
+    }
+
+    const safeIndex = Math.max(0, Math.min(pointNodes.length - 1, Number(index) || 0));
+    const activeNode = pointNodes[safeIndex];
+    const svgRect = svg.getBoundingClientRect();
+    const shellRect = chartRoot.getBoundingClientRect();
+    const ratioX = Math.max(0, Math.min(1, Number(activeNode.getAttribute("data-chart-ratio-x") || 0)));
+    const ratioY = Math.max(0, Math.min(1, Number(activeNode.getAttribute("data-chart-ratio-y") || 0)));
+    const x = (svgRect.left - shellRect.left) + (ratioX * svgRect.width);
+    const y = (svgRect.top - shellRect.top) + (ratioY * svgRect.height);
+
+    pointNodes.forEach((node, nodeIndex) => {
+      const isActive = nodeIndex === safeIndex;
+      node.classList.toggle("is-active", isActive);
+      node.setAttribute("aria-current", isActive ? "true" : "false");
+      const group = node.closest("[data-chart-point-group]");
+      if (group) {
+        group.classList.toggle("is-active", isActive);
+      }
+    });
+
+    chartRoot.style.setProperty("--profile-history-tooltip-x", `${x.toFixed(2)}px`);
+    chartRoot.style.setProperty("--profile-history-tooltip-y", `${y.toFixed(2)}px`);
+    chartRoot.classList.toggle("is-tooltip-left", ratioX > 0.72);
+    chartRoot.classList.toggle("is-tooltip-right", ratioX < 0.28);
+    chartRoot.dataset.activeChartIndex = String(safeIndex);
+
+    if (tooltipDate) {
+      tooltipDate.textContent = String(activeNode.getAttribute("data-chart-date") || "");
+    }
+    if (tooltipRating) {
+      tooltipRating.textContent = String(activeNode.getAttribute("data-chart-rating") || "");
+    }
+    if (tooltipMeta) {
+      tooltipMeta.textContent = String(activeNode.getAttribute("data-chart-meta") || "");
+    }
+
+    tooltip.classList.add("is-visible");
+    return true;
+  }
+
+  function syncProfileHistoryCharts(scope = el.mainContent) {
+    const root = scope instanceof HTMLElement ? scope : document;
+    let found = false;
+
+    root.querySelectorAll("[data-profile-history-chart]").forEach((chartRoot) => {
+      if (!(chartRoot instanceof HTMLElement)) return;
+      found = true;
+
+      const pointNodes = Array.from(chartRoot.querySelectorAll("[data-chart-point-index]"));
+      if (!pointNodes.length) return;
+
+      if (chartRoot.dataset.chartBound !== "true") {
+        pointNodes.forEach((node, index) => {
+          node.addEventListener("pointerenter", () => {
+            setActiveProfileHistoryPoint(chartRoot, index);
+          });
+          node.addEventListener("click", () => {
+            setActiveProfileHistoryPoint(chartRoot, index);
+          });
+          node.addEventListener("focus", () => {
+            setActiveProfileHistoryPoint(chartRoot, index);
+          });
+          node.addEventListener("keydown", (event) => {
+            if (!(event instanceof KeyboardEvent)) return;
+
+            if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const nextIndex = Math.max(0, index - 1);
+              pointNodes[nextIndex]?.focus();
+              setActiveProfileHistoryPoint(chartRoot, nextIndex);
+              return;
+            }
+
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+              event.preventDefault();
+              const nextIndex = Math.min(pointNodes.length - 1, index + 1);
+              pointNodes[nextIndex]?.focus();
+              setActiveProfileHistoryPoint(chartRoot, nextIndex);
+              return;
+            }
+
+            if (event.key === "Home") {
+              event.preventDefault();
+              pointNodes[0]?.focus();
+              setActiveProfileHistoryPoint(chartRoot, 0);
+              return;
+            }
+
+            if (event.key === "End") {
+              event.preventDefault();
+              pointNodes[pointNodes.length - 1]?.focus();
+              setActiveProfileHistoryPoint(chartRoot, pointNodes.length - 1);
+            }
+          });
+        });
+        chartRoot.dataset.chartBound = "true";
+      }
+
+      const activeIndex = Number(chartRoot.dataset.activeChartIndex || pointNodes.length - 1);
+      setActiveProfileHistoryPoint(chartRoot, activeIndex);
+    });
+
+    return found;
   }
 
   function renderCategoryRatingGrid(categoryRatings, options = {}) {
@@ -9669,6 +9878,7 @@
     }
 
     syncQueuePanelHeight();
+    syncProfileHistoryCharts();
   }
 
   function initEvents() {
