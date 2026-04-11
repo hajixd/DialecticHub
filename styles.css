@@ -3123,6 +3123,16 @@ body.is-mobile-app {
   border-bottom: 1px solid var(--surface-divider);
 }
 
+.is-mobile-app .mobile-stat.is-winner {
+  grid-column: 1 / -1;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid rgba(137, 173, 115, 0.32);
+  border-bottom: 1px solid rgba(137, 173, 115, 0.32);
+  border-radius: var(--radius-sm);
+  background: rgba(137, 173, 115, 0.16);
+}
+
 .is-mobile-app .mobile-stat strong {
   font-size: 24px;
   line-height: 1;
@@ -3246,6 +3256,11 @@ body.is-mobile-app {
   gap: 8px;
 }
 
+.is-mobile-app .mobile-row-foot .category-tag-wide {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 .is-mobile-app .mobile-admin-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3280,12 +3295,34 @@ body.is-mobile-app {
 }
 
 .is-mobile-app .mobile-debate-people {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  width: 100%;
   gap: 8px;
 }
 
+.is-mobile-app .mobile-debate-category-row {
+  width: 100%;
+}
+
+.is-mobile-app .mobile-debate-category-row .category-tag-wide {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 .is-mobile-app .mobile-debate-people .person-badge {
-  min-width: 70px;
+  min-width: 0;
+  width: 100%;
   padding: 0 14px;
+}
+
+.is-mobile-app .mobile-debate-people .profile-link,
+.is-mobile-app .mobile-debate-people .profile-link-inner {
+  width: 100%;
+}
+
+.is-mobile-app .mobile-debate-people .profile-link-inner {
+  justify-content: center;
 }
 
 .is-mobile-app .mobile-debate-people .mini-tag {

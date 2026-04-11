@@ -67,6 +67,7 @@
     settingsSection: "root",
     scheduleSection: "new",
     archiveEditMode: false,
+    debateEditMode: false,
     searchTerm: "",
     searchDraft: "",
     searchSuggestions: [],
@@ -1026,6 +1027,7 @@
   function setPage(page, options = {}) {
     const nextPage = VALID_PAGES.has(page) ? page : "dashboard";
     const currentUid = String(state.user?.uid || "").trim();
+    const currentDebateId = String(state.debateId || "").trim();
     const requestedProfileUid = String(options.profileUid || "").trim();
     const requestedDebateId = String(options.debateId || "").trim();
     state.currentPage = nextPage;
@@ -1033,6 +1035,7 @@
     state.debateId = nextPage === "debate" && requestedDebateId ? requestedDebateId : "";
     state.settingsSection = nextPage === "settings" ? normalizeSettingsSection(options.settingsSection || "root") : "root";
     state.archiveEditMode = nextPage === "archive" ? state.archiveEditMode : false;
+    state.debateEditMode = nextPage === "debate" && requestedDebateId && requestedDebateId === currentDebateId ? state.debateEditMode : false;
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
@@ -1082,6 +1085,17 @@
   function toggleArchiveEditMode() {
     if (!currentIsAdmin()) return;
     state.archiveEditMode = !state.archiveEditMode;
+    renderApp({ preserveScroll: true });
+  }
+
+  function canToggleDebateEdit(debate) {
+    return Boolean(debate && state.user && (currentIsAdmin() || canEditDebateVideo(debate)));
+  }
+
+  function toggleDebateEditMode() {
+    const debate = state.debates.find((entry) => entry.id === String(state.debateId || "").trim()) || null;
+    if (!canToggleDebateEdit(debate)) return;
+    state.debateEditMode = !state.debateEditMode;
     renderApp({ preserveScroll: true });
   }
 
@@ -3401,7 +3415,8 @@
         : "";
     const resultTone = isAwaitingReview ? " review" : debate.result === "draw" ? " draw" : " positive";
     const showStatusChip = !options.hideStatus;
-    const showResultPill = Boolean(resultLabel);
+    const showResultPill = !options.hideResultPill && Boolean(resultLabel);
+    const categoryClassName = options.fullWidthCategory ? "category-tag-wide" : "";
 
     return `
       <article class="mobile-entry">
@@ -3420,7 +3435,7 @@
           </div>
           <div class="mobile-row-foot">
             ${showStatusChip ? `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>` : ""}
-            ${renderCategoryBadge(debate.category)}
+            ${renderCategoryBadge(debate.category, categoryClassName)}
             ${showResultPill ? `<span class="result-pill${resultTone}">${escapeHtml(resultLabel)}</span>` : ""}
           </div>
         </button>
@@ -3651,10 +3666,15 @@
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block">
-          <span class="page-kicker">Debate</span>
-          <h2 class="mobile-page-title">${escapeHtml(debate.topic || "Untitled debate")}</h2>
-          <div class="badge-row">
-            ${renderCategoryBadge(debate.category)}
+          <div class="mobile-section-head mobile-page-head">
+            <div class="mobile-page-head-copy">
+              <span class="page-kicker">Debate</span>
+              <h2 class="mobile-page-title">${escapeHtml(debate.topic || "Untitled debate")}</h2>
+            </div>
+            ${renderDebateEditButton(debate, { mobile: true })}
+          </div>
+          <div class="badge-row mobile-debate-category-row">
+            ${renderCategoryBadge(debate.category, "category-tag-wide mobile-debate-category-tag")}
           </div>
           <div class="people-row mobile-debate-people">
             ${renderPersonBadge(debate.debaterAName, debate.debaterAUid, { isWinner: aWinner, isLoser: aLoser })}
@@ -3677,6 +3697,8 @@
           </div>
         </section>
 
+        ${renderDebateAdminTools(debate, { mobile: true })}
+
         <section class="mobile-block">
           <div class="mobile-section-head">
             <h3>Video</h3>
@@ -3696,7 +3718,7 @@
               : renderEmptyState(debate.status === "resolved" ? "No video yet" : "Video after resolution", "")
           }
           ${
-            model.selectedDebateCanEditVideo
+            model.selectedDebateCanEditVideo && state.debateEditMode
               ? `
                   <form class="stack-form" id="debate-video-form">
                     <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
@@ -3978,6 +4000,8 @@
           ${renderMobileDebateList(model.past, {
             emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet",
             hideStatus: true,
+            hideResultPill: true,
+            fullWidthCategory: true,
             showAdminControls: currentIsAdmin() && state.archiveEditMode
           })}
         </section>
@@ -4301,15 +4325,25 @@
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
     const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
+    const resultToneClass = isAwaitingReview
+      ? " is-review"
+      : debate.status === "resolved" && debate.result === "draw"
+        ? " is-draw"
+        : debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A"
+          ? " is-winner"
+          : "";
     const commentBusy = state.actionBusyKey === `${debate.id}:comment`;
     const videoBusy = state.actionBusyKey === `${debate.id}:video`;
 
     return `
       <section class="page-shell schedule-page">
         <section class="page-hero">
-          <div>
-            <span class="page-kicker">Debate</span>
-            <h2 class="page-title">${escapeHtml(debate.topic || "Untitled debate")}</h2>
+          <div class="page-hero-toolbar">
+            <div>
+              <span class="page-kicker">Debate</span>
+              <h2 class="page-title">${escapeHtml(debate.topic || "Untitled debate")}</h2>
+            </div>
+            ${renderDebateEditButton(debate)}
           </div>
 
           <div class="people-row">
@@ -4327,13 +4361,15 @@
               <span class="detail-label">Category</span>
               <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
             </div>
-            <div class="detail-row${debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A" ? " is-winner" : ""}">
+            <div class="detail-row${resultToneClass}">
               <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
               <strong>${escapeHtml(resultDetailValue)}</strong>
             </div>
           </div>
 
         </section>
+
+        ${renderDebateAdminTools(debate)}
 
         <section class="section-grid debate-page-grid">
           <section class="section-panel">
@@ -4362,7 +4398,7 @@
             }
 
             ${
-              model.selectedDebateCanEditVideo
+              model.selectedDebateCanEditVideo && state.debateEditMode
                 ? `
                   <form class="stack-form" id="debate-video-form">
                     <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
@@ -5096,16 +5132,6 @@
                 ? `<div class="debate-subline">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>`
                 : ""
             }
-            ${
-              options.hideStatus
-                ? ""
-                : `
-                  <div class="badge-row">
-                    <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
-                    ${renderCategoryBadge(debate.category)}
-                  </div>
-                `
-            }
           </div>
         </div>
 
@@ -5775,6 +5801,165 @@
       >
         ${state.archiveEditMode ? "Done" : "Edit"}
       </button>
+    `;
+  }
+
+  function renderDebateEditButton(debate, options = {}) {
+    if (!canToggleDebateEdit(debate)) return "";
+    const mobile = Boolean(options.mobile);
+    return `
+      <button
+        class="secondary-btn archive-edit-btn${mobile ? " archive-edit-btn-mobile" : ""}"
+        type="button"
+        data-action="toggle-debate-edit"
+      >
+        ${state.debateEditMode ? "Done" : "Edit"}
+      </button>
+    `;
+  }
+
+  function renderDebateAdminTools(debate, options = {}) {
+    if (!currentIsAdmin() || !state.debateEditMode || !debate) return "";
+
+    const isBusy = state.actionBusyKey.startsWith(`${debate.id}:`);
+    const isAwaitingReview = isDebateAwaitingReview(debate);
+    const mobile = Boolean(options.mobile);
+    const shellClassName = mobile ? "mobile-block" : "section-panel";
+    const stackClassName = mobile ? "mobile-admin-stack" : "admin-control-stack";
+    const actionsClassName = mobile ? "mobile-admin-actions" : "admin-actions";
+    const headingMarkup = mobile
+      ? `
+          <div class="mobile-section-head">
+            <h3>Edit Debate</h3>
+          </div>
+        `
+      : `
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">Edit Debate</h3>
+            </div>
+          </div>
+        `;
+
+    let content = "";
+    if (isAwaitingReview) {
+      content = `
+        <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
+        <div class="${actionsClassName}">
+          <button
+            class="result-btn win"
+            type="button"
+            data-action="review-submitted-debate"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="accept"
+            ${isBusy ? "disabled" : ""}
+          >
+            Accept
+          </button>
+          <button
+            class="result-btn reopen"
+            type="button"
+            data-action="review-submitted-debate"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="decline"
+            ${isBusy ? "disabled" : ""}
+          >
+            Decline
+          </button>
+        </div>
+      `;
+    } else if (debate.status === "scheduled") {
+      content = `
+        ${renderResolveVideoField(debate, mobile ? { mobile: true } : {})}
+        <div class="${actionsClassName}">
+          <button
+            class="result-btn win"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="a"
+            ${isBusy ? "disabled" : ""}
+          >
+            ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))}
+          </button>
+          <button
+            class="result-btn win"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="b"
+            ${isBusy ? "disabled" : ""}
+          >
+            ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))}
+          </button>
+          <button
+            class="result-btn draw"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="draw"
+            ${isBusy ? "disabled" : ""}
+          >
+            Draw
+          </button>
+        </div>
+      `;
+    } else if (debate.status === "resolved") {
+      content = `
+        <div class="${actionsClassName}">
+          <button
+            class="result-btn win"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="a"
+            ${isBusy ? "disabled" : ""}
+          >
+            ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))}
+          </button>
+          <button
+            class="result-btn win"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="b"
+            ${isBusy ? "disabled" : ""}
+          >
+            ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))}
+          </button>
+          <button
+            class="result-btn draw"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="draw"
+            ${isBusy ? "disabled" : ""}
+          >
+            Draw
+          </button>
+          <button
+            class="result-btn reopen"
+            type="button"
+            data-action="claim-result"
+            data-debate-id="${escapeHtml(debate.id)}"
+            data-outcome="reopen"
+            ${isBusy ? "disabled" : ""}
+          >
+            Reopen
+          </button>
+        </div>
+      `;
+    }
+
+    if (!content) return "";
+
+    return `
+      <section class="${shellClassName}">
+        ${headingMarkup}
+        <div class="${stackClassName}" data-action="hold-admin-controls">
+          ${content}
+        </div>
+      </section>
     `;
   }
 
@@ -7359,6 +7544,7 @@
       state.settingsSection = "root";
       state.scheduleSection = "new";
       state.archiveEditMode = false;
+      state.debateEditMode = false;
       state.directory = [];
       state.debates = [];
       resetSearchState();
@@ -7385,6 +7571,7 @@
       state.settingsSection = "root";
       state.scheduleSection = "new";
       state.archiveEditMode = false;
+      state.debateEditMode = false;
       state.scheduleDraft = makeDefaultScheduleDraft(String(user.uid || ""));
       state.lazyDebateDraft = makeDefaultLazyDebateDraft();
       await ensureUserDocs(user, state.username);
@@ -8135,6 +8322,12 @@
       return;
     }
 
+    if (action === "toggle-debate-edit") {
+      event.preventDefault();
+      toggleDebateEditMode();
+      return;
+    }
+
     if (action === "mobile-open-own-profile") {
       event.preventDefault();
       openProfile(String(state.user?.uid || "").trim());
@@ -8464,6 +8657,7 @@
     state.debateId = getDebateIdFromUrl();
     state.settingsSection = "root";
     state.archiveEditMode = false;
+    state.debateEditMode = false;
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
