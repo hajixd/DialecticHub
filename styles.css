@@ -2491,6 +2491,19 @@ body.is-mobile-app {
   padding-top: 6px;
 }
 
+.is-mobile-app .mobile-search-field {
+  min-height: 48px;
+}
+
+.is-mobile-app .mobile-search-results {
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  max-height: none;
+  margin-top: 0;
+}
+
 .is-mobile-app .mobile-block {
   display: grid;
   gap: 14px;

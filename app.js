@@ -28,7 +28,7 @@
   const PW_PEPPER = "::codenames_pw_v1";
   const MAX_PROFILE_AVATAR_DATA_URL_LEN = 220000;
   const PLACEHOLDER_UID_PREFIX = "invite:";
-  const VALID_PAGES = new Set(["dashboard", "schedule", "archive", "rankings", "admin", "debate"]);
+  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "admin", "debate"]);
   const ELO_BASELINE = 1200;
   const ELO_K = 32;
   const MIN_RANKED_DEBATES = 4;
@@ -108,6 +108,7 @@
     menuChangeProfilePictureBtn: document.getElementById("menu-change-profile-picture-btn"),
     menuChangePasswordBtn: document.getElementById("menu-change-password-btn"),
     menuLogOutBtn: document.getElementById("menu-log-out-btn"),
+    primaryNavLink: document.getElementById("primary-nav-link"),
     profilePictureInput: document.getElementById("profile-picture-input"),
     userName: document.getElementById("user-name"),
     userSubtitle: document.getElementById("user-subtitle"),
@@ -699,6 +700,24 @@
     renderApp();
   }
 
+  function syncPrimaryNavLink(mobileViewport) {
+    if (!el.primaryNavLink) return;
+
+    const nextPage = mobileViewport ? "search" : "dashboard";
+    const nextHref = mobileViewport ? "./?page=search" : "./";
+    const nextLabel = mobileViewport ? "Search" : "Profile";
+
+    if (el.primaryNavLink.getAttribute("data-page-link") !== nextPage) {
+      el.primaryNavLink.setAttribute("data-page-link", nextPage);
+    }
+    if (el.primaryNavLink.getAttribute("href") !== nextHref) {
+      el.primaryNavLink.setAttribute("href", nextHref);
+    }
+    if (el.primaryNavLink.textContent !== nextLabel) {
+      el.primaryNavLink.textContent = nextLabel;
+    }
+  }
+
   function openProfile(uid) {
     const safeUid = String(uid || "").trim();
     if (!safeUid) return;
@@ -1112,15 +1131,17 @@
       });
     });
 
-    addSuggestion({
-      key: `search:${needle}`,
-      kind: "Search",
-      title: trimmedQuery,
-      meta: "Search current page",
-      note: "Apply this filter",
-      page: state.currentPage,
-      term: trimmedQuery
-    });
+    if (state.currentPage !== "search") {
+      addSuggestion({
+        key: `search:${needle}`,
+        kind: "Search",
+        title: trimmedQuery,
+        meta: "Search current page",
+        note: "Apply this filter",
+        page: state.currentPage,
+        term: trimmedQuery
+      });
+    }
 
     return suggestions;
   }
@@ -1150,6 +1171,48 @@
         `;
       })
       .join("");
+  }
+
+  function renderMobileSearchResults() {
+    const query = String(state.searchDraft || "").trim();
+    state.searchSuggestions = buildSearchSuggestions(query);
+
+    if (!query) {
+      state.searchHighlightIndex = -1;
+      return renderEmptyState("Start typing", "Search for a debater, topic, moderator, or page.");
+    }
+
+    if (!state.searchSuggestions.length) {
+      state.searchHighlightIndex = -1;
+      return renderEmptyState("No matches", "Try another search.");
+    }
+
+    if (state.searchHighlightIndex >= state.searchSuggestions.length) {
+      state.searchHighlightIndex = 0;
+    }
+
+    return `
+      <div class="search-popover mobile-search-results" role="listbox" aria-label="Search results">
+        ${renderSearchSuggestions()}
+      </div>
+    `;
+  }
+
+  function syncMobileSearchPageUi() {
+    const input = el.mainContent?.querySelector("#mobile-search-input");
+    const results = el.mainContent?.querySelector("#mobile-search-results");
+    if (!(input instanceof HTMLInputElement) || !results) return false;
+
+    if (input.value !== state.searchDraft) {
+      input.value = state.searchDraft;
+    }
+
+    results.innerHTML = renderMobileSearchResults();
+    input.setAttribute("aria-expanded", state.searchSuggestions.length > 0 ? "true" : "false");
+
+    const clearButton = el.mainContent?.querySelector('[data-action="clear-mobile-search"]');
+    clearButton?.classList.toggle("hidden", !String(state.searchDraft || "").trim());
+    return true;
   }
 
   function syncSearchUi() {
@@ -2150,9 +2213,15 @@
       return;
     }
 
+    if (!mobileViewport && state.currentPage === "search") {
+      setPage("dashboard", { replace: true });
+      return;
+    }
+
     showHubShell();
     const model = buildViewModel();
     syncSearchUi();
+    syncPrimaryNavLink(mobileViewport);
 
     syncUserAvatarUi();
     if (el.userName) el.userName.textContent = state.username || "debater";
@@ -2166,7 +2235,9 @@
     if (el.headerRankedCount) el.headerRankedCount.textContent = model.myRank > 0 ? String(model.myRank) : "—";
     if (el.headerUpcomingCount) el.headerUpcomingCount.textContent = String(model.upcoming.length);
     const activeNavPage =
-      state.currentPage === "debate" ? model.selectedDebateSourcePage || "dashboard" : state.currentPage;
+      state.currentPage === "debate"
+        ? model.selectedDebateSourcePage || (mobileViewport ? "search" : "dashboard")
+        : state.currentPage;
 
     document.querySelectorAll("[data-page-link]").forEach((node) => {
       const matches = node.getAttribute("data-page-link") === activeNavPage;
@@ -2219,6 +2290,8 @@
     switch (state.currentPage) {
       case "debate":
         return renderMobileDebatePage(model);
+      case "search":
+        return renderMobileSearchPage();
       case "schedule":
         return renderMobileSchedulePage(model);
       case "archive":
@@ -2231,6 +2304,45 @@
       default:
         return renderMobileDashboardPage(model);
     }
+  }
+
+  function renderMobileSearchPage() {
+    const hasQuery = Boolean(String(state.searchDraft || "").trim());
+
+    return `
+      <section class="page-shell mobile-page">
+        <section class="mobile-block">
+          <span class="page-kicker">Search</span>
+          <h2 class="mobile-page-title">Find debates and debaters</h2>
+          <label class="search-field mobile-search-field" for="mobile-search-input">
+            <span class="search-label">Search</span>
+            <input
+              id="mobile-search-input"
+              type="search"
+              data-mobile-search-input="true"
+              value="${escapeHtml(state.searchDraft)}"
+              placeholder="Topic, debater, moderator..."
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-controls="mobile-search-results"
+              aria-expanded="${hasQuery ? "true" : "false"}"
+            />
+            <button
+              class="search-clear${hasQuery ? "" : " hidden"}"
+              type="button"
+              data-action="clear-mobile-search"
+              aria-label="Clear search"
+            >
+              &times;
+            </button>
+          </label>
+          <div id="mobile-search-results">
+            ${renderMobileSearchResults()}
+          </div>
+        </section>
+      </section>
+    `;
   }
 
   function renderCompactRecordLine(player) {
@@ -3095,17 +3207,6 @@
                 />
               </label>
               <label class="field">
-                <span>YouTube link</span>
-                <input
-                  type="url"
-                  name="videoUrl"
-                  data-draft-owner="lazy"
-                  data-draft-field="videoUrl"
-                  value="${escapeHtml(lazyDraft.videoUrl)}"
-                  placeholder="Optional YouTube link"
-                />
-              </label>
-              <label class="field">
                 <span>Description</span>
                 <textarea
                   name="description"
@@ -3296,6 +3397,17 @@
                   data-draft-field="moderator"
                   value="${escapeHtml(lazyDraft.moderator)}"
                   placeholder="Optional moderator or judge name"
+                />
+              </label>
+              <label class="field">
+                <span>YouTube link</span>
+                <input
+                  type="url"
+                  name="videoUrl"
+                  data-draft-owner="lazy"
+                  data-draft-field="videoUrl"
+                  value="${escapeHtml(lazyDraft.videoUrl)}"
+                  placeholder="Optional YouTube link"
                 />
               </label>
               <label class="field">
@@ -3884,28 +3996,68 @@
     return `<span class="${classes.join(" ")}">${escapeHtml(getDebateCategoryLabel(categoryId))}</span>`;
   }
 
+  function getCategorySelectKey(owner = "schedule") {
+    return `${owner === "lazy" ? "lazy" : "schedule"}-category`;
+  }
+
   function renderDebateCategorySelect(owner = "schedule", selectedCategory = "") {
     const safeOwner = owner === "lazy" ? "lazy" : "schedule";
     const safeSelected = isValidDebateCategory(selectedCategory) ? normalizeDebateCategory(selectedCategory) : "";
+    const selectedLabel = safeSelected ? getDebateCategoryLabel(safeSelected) : "";
+    const selectKey = getCategorySelectKey(safeOwner);
 
     return `
-      <label class="field">
+      <label class="field" data-category-select-owner="${escapeHtml(safeOwner)}">
         <span>Category</span>
-        <select
-          name="category"
-          data-draft-owner="${escapeHtml(safeOwner)}"
-          data-draft-field="category"
-          required
-        >
-          <option value="">Select category</option>
-          ${DEBATE_CATEGORIES.map((category) => {
-            return `
-              <option value="${escapeHtml(category.id)}" ${safeSelected === category.id ? "selected" : ""}>
-                ${escapeHtml(category.label)}
-              </option>
-            `;
-          }).join("")}
-        </select>
+        <div class="custom-select${state.openSelectKey === selectKey ? " is-open" : ""}" data-select-root="${escapeHtml(selectKey)}">
+          <input
+            type="hidden"
+            name="category"
+            data-draft-owner="${escapeHtml(safeOwner)}"
+            data-draft-field="category"
+            value="${escapeHtml(safeSelected)}"
+          />
+          <button
+            class="custom-select-trigger"
+            type="button"
+            data-action="toggle-category-select"
+            data-select-key="${escapeHtml(selectKey)}"
+            aria-haspopup="listbox"
+            aria-expanded="${state.openSelectKey === selectKey ? "true" : "false"}"
+          >
+            <span class="custom-select-value${selectedLabel ? "" : " is-placeholder"}">
+              ${escapeHtml(selectedLabel || "Select category")}
+            </span>
+            <span class="custom-select-caret" aria-hidden="true"></span>
+          </button>
+          <div class="custom-select-menu${state.openSelectKey === selectKey ? "" : " hidden"}" role="listbox" aria-label="Category">
+            <div class="custom-select-options">
+              <button
+                class="custom-select-option${safeSelected ? "" : " is-selected"}"
+                type="button"
+                data-action="choose-category"
+                data-select-owner="${escapeHtml(safeOwner)}"
+                data-value=""
+              >
+                Select category
+              </button>
+              ${DEBATE_CATEGORIES.map((category) => {
+                const isSelected = safeSelected === category.id;
+                return `
+                  <button
+                    class="custom-select-option${isSelected ? " is-selected" : ""}"
+                    type="button"
+                    data-action="choose-category"
+                    data-select-owner="${escapeHtml(safeOwner)}"
+                    data-value="${escapeHtml(category.id)}"
+                  >
+                    ${escapeHtml(category.label)}
+                  </button>
+                `;
+              }).join("")}
+            </div>
+          </div>
+        </div>
       </label>
     `;
   }
@@ -4036,6 +4188,17 @@
     return true;
   }
 
+  function syncCategorySelectUi(owner = "schedule") {
+    const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const form = getDraftFormElement(safeOwner);
+    const draft = getDraftState(safeOwner);
+    const wrapper = form?.querySelector(`[data-category-select-owner="${safeOwner}"]`);
+    if (!wrapper || !draft) return false;
+
+    wrapper.outerHTML = renderDebateCategorySelect(safeOwner, draft.category);
+    return true;
+  }
+
   function syncDraftFormUi(owner = "schedule") {
     const safeOwner = owner === "lazy" ? "lazy" : "schedule";
     const form = getDraftFormElement(safeOwner);
@@ -4045,7 +4208,7 @@
     form.querySelectorAll(`[data-draft-owner="${safeOwner}"][data-draft-field]`).forEach((node) => {
       if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) return;
       const field = String(node.getAttribute("data-draft-field") || "").trim();
-      if (!field || field === "debaterAUid" || field === "debaterBUid") return;
+      if (!field || field === "debaterAUid" || field === "debaterBUid" || field === "category") return;
       const nextValue = String(draft[field] ?? "");
       if (node.value !== nextValue) {
         node.value = nextValue;
@@ -4065,6 +4228,8 @@
         owner: safeOwner
       });
     });
+
+    syncCategorySelectUi(safeOwner);
 
     if (safeOwner === "lazy") {
       syncLazyResultUi();
@@ -5940,6 +6105,16 @@
       return;
     }
 
+    if (action === "clear-mobile-search") {
+      event.preventDefault();
+      resetSearchState();
+      syncSearchUi();
+      if (!syncMobileSearchPageUi()) {
+        renderApp({ preserveScroll: true });
+      }
+      return;
+    }
+
     if (action === "claim-result") {
       event.preventDefault();
       const debateId = actionButton.getAttribute("data-debate-id");
@@ -5954,6 +6129,13 @@
       return;
     }
 
+    if (action === "toggle-category-select") {
+      event.preventDefault();
+      const selectKey = String(actionButton.getAttribute("data-select-key") || "").trim();
+      toggleOpenSelect(selectKey);
+      return;
+    }
+
     if (action === "choose-debater") {
       event.preventDefault();
       const field = String(actionButton.getAttribute("data-select-field") || "").trim();
@@ -5961,6 +6143,18 @@
       const value = String(actionButton.getAttribute("data-value") || "").trim();
       if (!field) return;
       setDraftField(owner, field, value);
+      state.openSelectKey = "";
+      if (!syncDraftFormUi(owner)) {
+        renderApp({ preserveScroll: true });
+      }
+      return;
+    }
+
+    if (action === "choose-category") {
+      event.preventDefault();
+      const owner = String(actionButton.getAttribute("data-select-owner") || "schedule").trim();
+      const value = String(actionButton.getAttribute("data-value") || "").trim();
+      setDraftField(owner, "category", value);
       state.openSelectKey = "";
       if (!syncDraftFormUi(owner)) {
         renderApp({ preserveScroll: true });
@@ -6030,6 +6224,18 @@
   }
 
   function handleMainInput(event) {
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-mobile-search-input")) {
+      state.searchDraft = String(event.target.value || "");
+      state.searchTerm = "";
+      state.searchMenuOpen = false;
+      state.searchHighlightIndex = -1;
+      syncSearchUi();
+      if (!syncMobileSearchPageUi()) {
+        renderApp({ preserveScroll: true });
+      }
+      return;
+    }
+
     const selectFilterField = event.target.getAttribute("data-select-filter");
     if (selectFilterField) {
       syncUsernameInputValue(event.target);
@@ -6049,6 +6255,17 @@
   }
 
   function handleMainKeydown(event) {
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-mobile-search-input")) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const firstSuggestion = el.mainContent?.querySelector('#mobile-search-results [data-action="apply-search-suggestion"]');
+        if (firstSuggestion instanceof HTMLButtonElement) {
+          firstSuggestion.click();
+        }
+      }
+      return;
+    }
+
     const selectFilterField = event.target.getAttribute("data-select-filter");
     if (selectFilterField) {
       if (event.key === "Escape") {
