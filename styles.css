@@ -303,6 +303,7 @@ html[data-theme="light"] .avatar-chip {
 
 .auth-screen {
   min-height: 100vh;
+  min-height: 100svh;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -600,6 +601,55 @@ textarea {
 input::placeholder,
 textarea::placeholder {
   color: rgba(245, 241, 232, 0.42);
+}
+
+.password-input-shell {
+  position: relative;
+}
+
+.password-input-shell input {
+  padding-right: 48px;
+}
+
+.password-visibility-btn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  transition: color 0.16s ease, background 0.16s ease;
+}
+
+.password-visibility-btn:hover,
+.password-visibility-btn:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.password-eye {
+  width: 18px;
+  height: 18px;
+}
+
+.password-eye-off {
+  display: none;
+}
+
+.password-visibility-btn.is-visible .password-eye-open {
+  display: none;
+}
+
+.password-visibility-btn.is-visible .password-eye-off {
+  display: block;
 }
 
 textarea {
@@ -1515,28 +1565,6 @@ textarea:focus {
   word-break: break-all;
 }
 
-.admin-user-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 72px;
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-soft);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.admin-user-status.is-admin {
-  border-color: rgba(212, 176, 103, 0.34);
-  background: rgba(212, 176, 103, 0.12);
-  color: var(--gold-strong);
-}
-
 .admin-user-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2289,7 +2317,8 @@ textarea:focus {
 
 @media (max-width: 980px) {
   .auth-screen {
-    place-items: start center;
+    min-height: 100svh;
+    place-items: center;
   }
 
   .auth-shell {
@@ -2442,11 +2471,13 @@ textarea:focus {
 
 body.is-mobile-app {
   overscroll-behavior-y: none;
+  --mobile-tab-safe-pad: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) * 0.22), 0.22rem);
+  --mobile-tabbar-height: 66px;
 }
 
 .is-mobile-app .hub-shell {
   min-height: 100svh;
-  padding-bottom: calc(86px + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad));
 }
 
 .is-mobile-app .topbar {
@@ -2490,7 +2521,7 @@ body.is-mobile-app {
 
 .is-mobile-app .workspace {
   display: block;
-  padding: 0 14px calc(94px + env(safe-area-inset-bottom));
+  padding: 0 12px calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad) + 10px);
 }
 
 .is-mobile-app .board {
@@ -2509,32 +2540,90 @@ body.is-mobile-app {
   right: 0;
   bottom: 0;
   z-index: 30;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  backdrop-filter: blur(14px);
+  padding: 0.34rem 0.46rem var(--mobile-tab-safe-pad);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: #000;
+  box-shadow: 0 -18px 36px rgba(0, 0, 0, 0.44);
 }
 
 .is-mobile-app .sidebar-nav {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.18rem;
+  align-items: end;
 }
 
 .is-mobile-app .nav-btn {
-  flex: 1 1 0;
   min-width: 0;
-  padding: 10px 4px;
-  border-radius: 2px;
-  font-size: 11px;
+  min-height: 50px;
+  padding: 0.38rem 0.14rem 0.42rem;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(245, 241, 232, 0.48);
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 0.2rem;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.05;
   text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: normal;
+  box-shadow: none;
+}
+
+.is-mobile-app .nav-btn::before {
+  content: "";
+  width: 19px;
+  height: 19px;
+  background: currentColor;
+  opacity: 0.94;
+  -webkit-mask: var(--mobile-nav-icon) center / contain no-repeat;
+  mask: var(--mobile-nav-icon) center / contain no-repeat;
+}
+
+.is-mobile-app .nav-btn[data-page-link="search"] {
+  --mobile-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='11' cy='11' r='5.8' fill='none' stroke='%23000' stroke-width='2'/%3E%3Cpath d='M16 16l4 4' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+.is-mobile-app .nav-btn[data-page-link="schedule"] {
+  --mobile-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3.5' y='5.5' width='17' height='15' rx='3' fill='none' stroke='%23000' stroke-width='1.8'/%3E%3Cpath d='M7.5 3.8v3.4M16.5 3.8v3.4M3.8 9.3h16.4' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+.is-mobile-app .nav-btn[data-page-link="archive"] {
+  --mobile-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 5.2A6.8 6.8 0 1 1 5.2 12' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M12 8.5V12l2.9 1.9' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M5 7V4.5H7.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.is-mobile-app .nav-btn[data-page-link="rankings"] {
+  --mobile-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 18.5h14' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M7.5 16V11.5M12 16V7.5M16.5 16V9.5' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+.is-mobile-app .nav-btn[data-page-link="settings"] {
+  --mobile-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.2 7.2h11.6M6.2 12h11.6M6.2 16.8h7.6' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M4.5 4.5h15v15h-15z' fill='none' stroke='%23000' stroke-width='1.6' opacity='0.45'/%3E%3C/svg%3E");
+}
+
+.is-mobile-app .nav-btn.is-active {
+  border-color: transparent;
+  background: rgba(212, 176, 103, 0.08);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px rgba(212, 176, 103, 0.12);
+}
+
+.is-mobile-app .nav-btn:hover,
+.is-mobile-app .nav-btn:active {
+  transform: none;
 }
 
 .is-mobile-app .mobile-page {
   gap: 18px;
   padding-top: 0;
+}
+
+.is-mobile-app .page-shell {
+  animation: none;
 }
 
 .is-mobile-app .mobile-search-field {
@@ -2562,7 +2651,6 @@ body.is-mobile-app {
   border-bottom: 0;
 }
 
-.is-mobile-app .mobile-settings-head,
 .is-mobile-app .mobile-settings-title,
 .is-mobile-app .mobile-settings-stack {
   display: grid;
@@ -2571,12 +2659,6 @@ body.is-mobile-app {
 
 .is-mobile-app .mobile-settings-title {
   gap: 6px;
-}
-
-.is-mobile-app .mobile-settings-back {
-  width: fit-content;
-  min-height: 38px;
-  padding: 0 14px;
 }
 
 .is-mobile-app .mobile-settings-tab {
@@ -2606,6 +2688,25 @@ body.is-mobile-app {
 
 .is-mobile-app .mobile-settings-tab.is-danger strong {
   color: #f1a39d;
+}
+
+.is-mobile-app .compact-mobile-change {
+  gap: 2px;
+  padding: 11px 13px;
+}
+
+.is-mobile-app .compact-mobile-change strong {
+  font-size: 13px;
+}
+
+.is-mobile-app .compact-mobile-change span {
+  font-size: 11px;
+}
+
+.is-mobile-app .admin-user-action-btn {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .is-mobile-app .mobile-identity {

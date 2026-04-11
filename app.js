@@ -226,6 +226,30 @@
     return String(value || "").replace(/^\s+/, "").replace(/\s+/g, "_").toLowerCase();
   }
 
+  function formatDisplayName(value, fallback = "Debater") {
+    const explicitFallback = arguments.length > 1 ? String(fallback ?? "").trim() : "Debater";
+    const raw = String(value || "").trim();
+    const normalized = normalizeUsername(raw);
+    const source = normalized || explicitFallback;
+    const words = String(source || "")
+      .replace(/[_\s]+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (!words.length) {
+      return explicitFallback;
+    }
+
+    return words
+      .map((word) => {
+        const safeWord = String(word || "").trim().toLowerCase();
+        if (!safeWord) return "";
+        return safeWord.charAt(0).toUpperCase() + safeWord.slice(1);
+      })
+      .join(" ");
+  }
+
   function syncUsernameInputValue(input) {
     if (!(input instanceof HTMLInputElement)) return "";
     const nextValue = normalizeUsernameInputValue(input.value);
@@ -514,7 +538,7 @@
   }
 
   function getAvatarMarkup(options = {}) {
-    const name = String(options.name || state.username || "debater").trim() || "debater";
+    const name = formatDisplayName(options.name || state.username || "debater", "Debater");
     const avatarDataUrl = Object.prototype.hasOwnProperty.call(options, "avatarDataUrl")
       ? normalizeAvatarDataUrl(options.avatarDataUrl || "")
       : normalizeAvatarDataUrl(state.selfProfile?.avatarDataUrl || "");
@@ -563,7 +587,7 @@
     el.userAvatar.style.setProperty("--avatar-bg", avatar.color);
     el.userAvatar.classList.toggle("has-image", avatar.hasImage);
     el.userAvatar.classList.toggle("is-initials", !avatar.hasImage);
-    el.userAvatar.setAttribute("aria-label", `${state.username || "debater"} avatar`);
+    el.userAvatar.setAttribute("aria-label", `${formatDisplayName(state.username || "debater", "Debater")} avatar`);
   }
 
   function loadImageElementFromFile(file) {
@@ -740,15 +764,13 @@
     }
 
     state.settingsSection = nextSection;
-    renderApp();
-    window.requestAnimationFrame(() => window.scrollTo(0, 0));
+    renderApp({ preserveScroll: true });
   }
 
   function setScheduleSection(section) {
     state.scheduleSection = normalizeScheduleSection(section);
     state.openSelectKey = "";
     renderApp({ preserveScroll: true });
-    window.requestAnimationFrame(() => window.scrollTo(0, 0));
   }
 
   function syncPrimaryNavLink(mobileViewport) {
@@ -1118,7 +1140,7 @@
         addSuggestion({
           key: `profile:${entry.uid}`,
           kind: "Profile",
-          title: entry.name,
+          title: formatDisplayName(entry.name, "Debater"),
           meta: bestCategory ? `${bestCategory.label} - ${bestCategory.ratingRounded} ELO` : "User page",
           note: entry.uid === currentUid ? "Open your profile" : "Open profile page",
           page: "dashboard",
@@ -1148,7 +1170,7 @@
 
         if (!haystack.includes(needle)) return;
 
-        const people = [normalizeUsername(debate.debaterAName || ""), normalizeUsername(debate.debaterBName || "")]
+        const people = [formatDisplayName(debate.debaterAName || "", ""), formatDisplayName(debate.debaterBName || "", "")]
           .filter(Boolean)
           .join(" vs ");
 
@@ -1175,7 +1197,7 @@
         addSuggestion({
           key: `profile:${player.uid}`,
           kind: "Profile",
-          title: player.name,
+          title: formatDisplayName(player.name, "Debater"),
           meta: bestCategory ? `${bestCategory.label} - ${bestCategory.ratingRounded} ELO` : `${player.ratingRounded} ELO`,
           note: String(player.uid || "").trim() === currentUid ? "Open your profile" : "Open profile page",
           page: "dashboard",
@@ -1205,7 +1227,7 @@
       addSuggestion({
         key: `moderator:${moderator}`,
         kind: "Moderator",
-        title: moderator,
+        title: formatDisplayName(moderator, "Moderator"),
         meta: hasUpcoming ? `${counts.upcoming} upcoming` : `${counts.resolved} resolved`,
         note: `Search moderator on ${hasUpcoming ? "schedule" : "archive"}`,
         page: hasUpcoming ? "schedule" : "archive",
@@ -2414,7 +2436,7 @@
     syncSettingsNavLink(mobileViewport);
 
     syncUserAvatarUi();
-    if (el.userName) el.userName.textContent = state.username || "debater";
+    if (el.userName) el.userName.textContent = formatDisplayName(state.username || "debater", "Debater");
     if (el.menuChangeProfilePictureBtn) {
       el.menuChangeProfilePictureBtn.disabled = state.profilePictureBusy;
       el.menuChangeProfilePictureBtn.textContent = state.profilePictureBusy
@@ -2434,7 +2456,15 @@
     });
 
     const nextMainContent = renderCurrentPage(model);
+    let releaseMobileMainContentHeight = false;
     if (el.mainContent && el.mainContent.innerHTML !== nextMainContent) {
+      if (mobileViewport) {
+        const currentHeight = Math.ceil(el.mainContent.getBoundingClientRect().height);
+        if (currentHeight > 0) {
+          el.mainContent.style.minHeight = `${currentHeight}px`;
+          releaseMobileMainContentHeight = true;
+        }
+      }
       el.mainContent.innerHTML = nextMainContent;
     }
     if (el.sideContent) {
@@ -2446,10 +2476,17 @@
     }
     syncQueuePanelHeight();
 
-    if (preserveScroll) {
+    if (preserveScroll || releaseMobileMainContentHeight) {
       window.requestAnimationFrame(() => {
-        window.scrollTo(scrollX, scrollY);
+        if (releaseMobileMainContentHeight && el.mainContent) {
+          el.mainContent.style.removeProperty("min-height");
+        }
+        if (preserveScroll) {
+          window.scrollTo(scrollX, scrollY);
+        }
       });
+    } else if (el.mainContent) {
+      el.mainContent.style.removeProperty("min-height");
     }
   }
 
@@ -2563,8 +2600,9 @@
   function renderMobileDebateRow(debate, options = {}) {
     const isBusy = state.actionBusyKey.startsWith(`${debate.id}:`);
     const winnerName = getDebateWinnerName(debate);
-    const matchup = `${normalizeUsername(debate.debaterAName || "debater")} vs ${normalizeUsername(
-      debate.debaterBName || "debater"
+    const matchup = `${formatDisplayName(debate.debaterAName || "debater", "Debater")} vs ${formatDisplayName(
+      debate.debaterBName || "debater",
+      "Debater"
     )}`;
     const resultLabel =
       debate.status === "resolved"
@@ -2605,7 +2643,7 @@
                     data-outcome="a"
                     ${isBusy ? "disabled" : ""}
                   >
-                    ${escapeHtml(normalizeUsername(debate.debaterAName || "A"))} wins
+                    ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
                   </button>
                   <button
                     class="result-btn win"
@@ -2615,7 +2653,7 @@
                     data-outcome="b"
                     ${isBusy ? "disabled" : ""}
                   >
-                    ${escapeHtml(normalizeUsername(debate.debaterBName || "B"))} wins
+                    ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
                   </button>
                   <button
                     class="result-btn draw"
@@ -2707,7 +2745,7 @@
               className: "page-avatar"
             })}
             <div class="mobile-identity-copy">
-              <h2 class="mobile-page-title">${escapeHtml(model.profileSnapshot.name)}</h2>
+              <h2 class="mobile-page-title">${escapeHtml(formatDisplayName(model.profileSnapshot.name, "Debater"))}</h2>
             </div>
           </div>
           ${renderCategoryRatingGrid(model.profileCategoryRatings, {
@@ -3079,19 +3117,9 @@
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block">
-          <div class="mobile-settings-head">
-            <button
-              class="ghost-btn mobile-settings-back"
-              type="button"
-              data-action="open-settings-section"
-              data-settings-section="root"
-            >
-              Back
-            </button>
-            <div class="mobile-settings-title">
-              <span class="page-kicker">Settings</span>
-              <h2 class="mobile-page-title">${escapeHtml(title)}</h2>
-            </div>
+          <div class="mobile-settings-title">
+            <span class="page-kicker">Settings</span>
+            <h2 class="mobile-page-title">${escapeHtml(title)}</h2>
           </div>
           ${content}
         </section>
@@ -3114,15 +3142,15 @@
             <strong>${escapeHtml(themeLabel)}</strong>
             <span>Switch the app appearance.</span>
           </button>
-          <button class="mobile-settings-tab" type="button" data-action="mobile-change-username">
+          <button class="mobile-settings-tab compact-mobile-change" type="button" data-action="mobile-change-username">
             <strong>Change Username</strong>
             <span>Update the name shown across debates and rankings.</span>
           </button>
-          <button class="mobile-settings-tab" type="button" data-action="mobile-change-avatar">
+          <button class="mobile-settings-tab compact-mobile-change" type="button" data-action="mobile-change-avatar">
             <strong>Change Profile Picture</strong>
             <span>Upload a new avatar.</span>
           </button>
-          <button class="mobile-settings-tab" type="button" data-action="mobile-change-password">
+          <button class="mobile-settings-tab compact-mobile-change" type="button" data-action="mobile-change-password">
             <strong>Change Password</strong>
             <span>Set a new password for this account.</span>
           </button>
@@ -3281,7 +3309,7 @@
             })}
             <div class="page-hero-copy">
               <span class="page-kicker">${model.profileIsCurrentUser ? "My Profile" : "Profile"}</span>
-              <h2 class="page-title">${escapeHtml(model.profileSnapshot.name)}</h2>
+              <h2 class="page-title">${escapeHtml(formatDisplayName(model.profileSnapshot.name, "Debater"))}</h2>
             </div>
           </div>
           <div class="hero-actions">
@@ -4037,7 +4065,7 @@
                 <span class="mini-tag">B</span>
               </div>
               <div class="mini-row">
-                <div><strong>${escapeHtml(debate.moderator || "No moderator")}</strong></div>
+                <div><strong>${escapeHtml(formatDisplayName(debate.moderator || "No moderator", "No Moderator"))}</strong></div>
                 <span class="mini-tag">Mod</span>
               </div>
             </div>
@@ -4073,6 +4101,7 @@
             const safeUid = String(entry.uid || "").trim();
             const role = normalizeUserRole(entry.role, "user");
             const isAdminRole = role === "admin";
+            const nextRoleLabel = isAdminRole ? "Change to User" : "Change to Admin";
             const busy = state.actionBusyKey === `${safeUid}:role`;
             return `
               <article class="admin-user-card">
@@ -4085,22 +4114,19 @@
                     })}
                     <span class="admin-user-meta">${escapeHtml(safeUid)}</span>
                   </div>
-                  <span class="admin-user-status${isAdminRole ? " is-admin" : ""}">
-                    ${isAdminRole ? "Admin" : "User"}
-                  </span>
                 </div>
                 <div class="admin-user-actions">
                   <button
-                    class="secondary-btn"
+                    class="secondary-btn admin-user-action-btn"
                     type="button"
                     data-action="admin-change-status"
                     data-profile-uid="${escapeHtml(safeUid)}"
                     ${busy ? "disabled" : ""}
                   >
-                    ${busy ? "Saving..." : "Change Status"}
+                    ${busy ? "Saving..." : nextRoleLabel}
                   </button>
                   <button
-                    class="secondary-btn"
+                    class="secondary-btn admin-user-action-btn"
                     type="button"
                     data-action="admin-change-username"
                     data-profile-uid="${escapeHtml(safeUid)}"
@@ -4108,7 +4134,7 @@
                     Change Username
                   </button>
                   <button
-                    class="secondary-btn"
+                    class="secondary-btn admin-user-action-btn"
                     type="button"
                     data-action="admin-change-avatar"
                     data-profile-uid="${escapeHtml(safeUid)}"
@@ -4116,7 +4142,7 @@
                     Change Profile Picture
                   </button>
                   <button
-                    class="ghost-btn"
+                    class="ghost-btn admin-user-action-btn"
                     type="button"
                     data-action="admin-change-password"
                     data-profile-uid="${escapeHtml(safeUid)}"
@@ -4288,7 +4314,7 @@
                     data-outcome="a"
                     ${isBusy ? "disabled" : ""}
                   >
-                    ${escapeHtml(normalizeUsername(debate.debaterAName || "A"))} wins
+                    ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
                   </button>
                   <button
                     class="result-btn win"
@@ -4298,7 +4324,7 @@
                     data-outcome="b"
                     ${isBusy ? "disabled" : ""}
                   >
-                    ${escapeHtml(normalizeUsername(debate.debaterBName || "B"))} wins
+                    ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
                   </button>
                   <button
                     class="result-btn draw"
@@ -4337,7 +4363,7 @@
 
   function renderProfileIdentityContent(name, uid, options = {}) {
     const safeUid = String(uid || "").trim();
-    const label = normalizeUsername(name || getNameForUid(safeUid)) || "debater";
+    const label = formatDisplayName(name || getNameForUid(safeUid), "Debater");
     const showAvatar = Boolean(options.showAvatar);
     const innerClasses = ["profile-link-inner"];
     const labelClasses = ["profile-link-label"];
@@ -4368,7 +4394,7 @@
 
   function renderProfileLink(name, uid, className = "", options = {}) {
     const safeUid = String(uid || "").trim();
-    const label = normalizeUsername(name || getNameForUid(safeUid)) || "debater";
+    const label = formatDisplayName(name || getNameForUid(safeUid), "Debater");
     const classes = ["profile-link"];
     const activeProfileUid = String(state.profileUid || state.user?.uid || "").trim();
     const content = options.showAvatar
@@ -4597,26 +4623,24 @@
 
   function renderLazyWinnerButtons() {
     const lazyDraft = state.lazyDebateDraft;
-    const debaterALabel = normalizeUsername(getNameForUid(lazyDraft.debaterAUid, "debater a")) || "debater a";
-    const debaterBLabel = normalizeUsername(getNameForUid(lazyDraft.debaterBUid, "debater b")) || "debater b";
     const activeResult = lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a";
 
     return `
       <button
         class="result-btn win${activeResult === "a" ? " is-active" : ""}"
-        type="button"
-        data-action="set-lazy-result"
-        data-value="a"
+      type="button"
+      data-action="set-lazy-result"
+      data-value="a"
       >
-        ${escapeHtml(debaterALabel)} won
+        Debater A
       </button>
       <button
         class="result-btn win${activeResult === "b" ? " is-active" : ""}"
-        type="button"
-        data-action="set-lazy-result"
-        data-value="b"
+      type="button"
+      data-action="set-lazy-result"
+      data-value="b"
       >
-        ${escapeHtml(debaterBLabel)} won
+        Debater B
       </button>
       <button
         class="result-btn draw${activeResult === "draw" ? " is-active" : ""}"
@@ -4702,8 +4726,8 @@
   function renderResultCopy(debate) {
     if (debate.status !== "resolved") return "Pending";
     if (debate.result === "draw") return "Draw";
-    if (debate.result === "a") return `${normalizeUsername(debate.debaterAName || "debater")} won`;
-    if (debate.result === "b") return `${normalizeUsername(debate.debaterBName || "debater")} won`;
+    if (debate.result === "a") return `${formatDisplayName(debate.debaterAName || "debater", "Debater")} won`;
+    if (debate.result === "b") return `${formatDisplayName(debate.debaterBName || "debater", "Debater")} won`;
     return "Resolved";
   }
 
@@ -4713,14 +4737,14 @@
     }
 
     if (debate.result === "a") {
-      return normalizeUsername(debate.winnerName || debate.debaterAName || "");
+      return formatDisplayName(debate.winnerName || debate.debaterAName || "", "Debater");
     }
 
     if (debate.result === "b") {
-      return normalizeUsername(debate.winnerName || debate.debaterBName || "");
+      return formatDisplayName(debate.winnerName || debate.debaterBName || "", "Debater");
     }
 
-    return normalizeUsername(debate.winnerName || "");
+    return formatDisplayName(debate.winnerName || "", "");
   }
 
   function renderRecordChips(player, options = {}) {
@@ -4882,7 +4906,7 @@
     const selected = String(selectedUid || "").trim();
     const blocked = String(otherUid || "").trim();
     const isOpen = state.openSelectKey === safeField;
-    const selectedName = selected ? getNameForUid(selected, "debater") : "";
+    const selectedName = selected ? formatDisplayName(getNameForUid(selected, "debater"), "Debater") : "";
     const options = [
       '<button class="custom-select-option" type="button" data-action="choose-debater" data-empty-option="true" data-label="" data-select-field="' +
         escapeHtml(safeField) +
@@ -4905,7 +4929,7 @@
           data-select-owner="${escapeHtml(safeOwner)}"
           data-value="${escapeHtml(uid)}"
         >
-          ${escapeHtml(normalizeUsername(entry.username || "debater"))}
+          ${escapeHtml(formatDisplayName(entry.username || "debater", "Debater"))}
         </button>
       `);
     });
@@ -5176,6 +5200,21 @@
     openProfile(String(state.user?.uid || "").trim());
   }
 
+  function toggleAuthPasswordVisibility(button) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    const targetId = String(button.getAttribute("data-target") || "").trim();
+    if (!targetId) return;
+
+    const input = document.getElementById(targetId);
+    if (!(input instanceof HTMLInputElement)) return;
+
+    const nextVisible = input.type === "password";
+    input.type = nextVisible ? "text" : "password";
+    button.classList.toggle("is-visible", nextVisible);
+    button.setAttribute("aria-label", nextVisible ? "Hide password" : "Show password");
+    button.setAttribute("title", nextVisible ? "Hide password" : "Show password");
+  }
+
   function openAdminUsernameModal(uid) {
     const safeUid = String(uid || "").trim();
     if (!safeUid || !currentIsAdmin()) return;
@@ -5200,7 +5239,7 @@
 
     const currentRole = getUserRoleForUid(safeUid);
     const nextRole = currentRole === "admin" ? "user" : "admin";
-    const safeName = normalizeUsername(getNameForUid(safeUid, "debater")) || "that user";
+    const safeName = formatDisplayName(getNameForUid(safeUid, "debater"), "That User") || "That User";
     const confirmed = window.confirm(
       `Change ${safeName} from ${currentRole === "admin" ? "Admin" : "User"} to ${nextRole === "admin" ? "Admin" : "User"}?`
     );
@@ -5260,7 +5299,7 @@
       openAccountModal("password");
       return;
     }
-    const safeName = normalizeUsername(getNameForUid(uid, "debater")) || "that user";
+    const safeName = formatDisplayName(getNameForUid(uid, "debater"), "That User") || "That User";
     showToast(
       `Changing ${safeName}'s password needs a secure Firebase Admin backend, so it is not available from this client-only app yet.`,
       "error"
@@ -5308,6 +5347,7 @@
     const targetName =
       normalizeUsername(state.profilePictureTargetName || getNameForUid(targetUid, targetUid === viewerUid ? state.username || "debater" : "debater")) ||
       "debater";
+    const targetDisplayName = formatDisplayName(targetName, "Debater");
     const isOwnTarget = targetUid === viewerUid;
     if (!isOwnTarget && !currentIsAdmin()) {
       showToast("Only admins can change another user's profile picture.", "error");
@@ -5335,7 +5375,7 @@
         }
         applyDirectoryAvatarLocally(targetUid, dataUrl);
         renderApp({ preserveScroll: true });
-        showToast(isOwnTarget ? "Profile picture updated." : `${targetName} profile picture updated.`, "success");
+        showToast(isOwnTarget ? "Profile picture updated." : `${targetDisplayName} profile picture updated.`, "success");
         return;
       }
 
@@ -5381,10 +5421,10 @@
       applyDirectoryAvatarLocally(targetUid, dataUrl);
 
       renderApp({ preserveScroll: true });
-      showToast(isOwnTarget ? "Profile picture updated." : `${targetName} profile picture updated.`, "success");
+      showToast(isOwnTarget ? "Profile picture updated." : `${targetDisplayName} profile picture updated.`, "success");
     } catch (error) {
       console.warn("Profile picture update failed", error);
-      showToast(String(error?.message || `Could not update ${isOwnTarget ? "your" : `${targetName}'s`} profile picture.`), "error");
+      showToast(String(error?.message || `Could not update ${isOwnTarget ? "your" : `${targetDisplayName}'s`} profile picture.`), "error");
     } finally {
       state.profilePictureBusy = false;
       state.profilePictureTargetUid = "";
@@ -6606,6 +6646,12 @@
     if (!actionButton) return;
 
     const action = actionButton.getAttribute("data-action");
+    if (action === "toggle-auth-password") {
+      event.preventDefault();
+      toggleAuthPasswordVisibility(actionButton);
+      return;
+    }
+
     if (action === "open-debate") {
       event.preventDefault();
       openDebate(actionButton.getAttribute("data-debate-id"));
