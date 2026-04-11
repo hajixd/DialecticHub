@@ -1679,6 +1679,7 @@
           title: debate.topic || "Untitled debate",
           meta: [getDebateCategoryLabel(debate.category), people].filter(Boolean).join(" • ") || "Debate",
           note: `${debate.status === "resolved" ? "Open archive" : "Open schedule board"} • ${formatShortDate(debate.scheduledFor)}`,
+          debateId: debate.id,
           page: debate.status === "resolved" ? "archive" : "schedule",
           term: debate.topic || trimmedQuery
         });
@@ -1914,6 +1915,13 @@
     const suggestion = state.searchSuggestions[index];
     if (!suggestion) {
       commitSearch(state.searchDraft, state.currentPage);
+      return;
+    }
+
+    if (suggestion.debateId) {
+      resetSearchState();
+      syncSearchUi();
+      openDebate(suggestion.debateId);
       return;
     }
 
@@ -3965,13 +3973,8 @@
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block">
-          <div class="mobile-section-head mobile-page-head">
-            <div class="mobile-page-head-copy">
-              <span class="page-kicker">Past Debates</span>
-              <h2 class="mobile-page-title">Archive</h2>
-            </div>
-            ${renderArchiveEditButton({ mobile: true })}
-          </div>
+          <span class="page-kicker">Past Debates</span>
+          <h2 class="mobile-page-title">Archive</h2>
           ${renderMobileDebateList(model.past, {
             emptyTitle: state.searchTerm ? "No past debates match that search" : "No past debates yet",
             hideStatus: true,
@@ -4295,6 +4298,9 @@
     const aLoser = debate.status === "resolved" && debate.result === "b";
     const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
+    const isAwaitingReview = isDebateAwaitingReview(debate);
+    const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
+    const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
     const commentBusy = state.actionBusyKey === `${debate.id}:comment`;
     const videoBusy = state.actionBusyKey === `${debate.id}:video`;
 
@@ -4304,10 +4310,6 @@
           <div>
             <span class="page-kicker">Debate</span>
             <h2 class="page-title">${escapeHtml(debate.topic || "Untitled debate")}</h2>
-            <div class="badge-row">
-              <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
-              ${renderCategoryBadge(debate.category)}
-            </div>
           </div>
 
           <div class="people-row">
@@ -4325,7 +4327,7 @@
               <span class="detail-label">Category</span>
               <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
             </div>
-            <div class="detail-row${resultDetailValue && resultDetailValue !== "N/A" ? " is-winner" : ""}">
+            <div class="detail-row${debate.status === "resolved" && resultDetailValue && resultDetailValue !== "N/A" ? " is-winner" : ""}">
               <span class="detail-label">${escapeHtml(resultDetailLabel)}</span>
               <strong>${escapeHtml(resultDetailValue)}</strong>
             </div>
@@ -4517,35 +4519,15 @@
     `;
   }
 
-  function renderScheduleHeroActions(selectedSection) {
-    const safeSection = normalizeScheduleSection(selectedSection);
-    const showingLogDebates = safeSection === "log";
-    return `
-      <div class="page-hero-actions">
-        <button
-          class="secondary-btn${showingLogDebates ? " is-active" : ""}"
-          type="button"
-          data-action="set-schedule-section"
-          data-value="${showingLogDebates ? "new" : "log"}"
-        >
-          ${showingLogDebates ? "Back to Schedule" : "Log Debates"}
-        </button>
-      </div>
-    `;
-  }
-
   function renderSchedulePage(model) {
     const scheduleSection = normalizeScheduleSection(state.scheduleSection);
 
     return `
       <section class="page-shell schedule-page">
         <section class="page-hero">
-          <div class="page-hero-toolbar">
-            <div>
-              <span class="page-kicker">Schedule Debate</span>
-              <h2 class="page-title">${escapeHtml(scheduleSection === "log" ? "Log Debates" : "Schedule")}</h2>
-            </div>
-            ${renderScheduleHeroActions(scheduleSection)}
+          <div>
+            <span class="page-kicker">Schedule Debate</span>
+            <h2 class="page-title">Schedule</h2>
           </div>
           ${renderScheduleTabs(scheduleSection)}
         </section>
@@ -4553,9 +4535,7 @@
         ${
           scheduleSection === "upcoming"
             ? renderUpcomingDebatesPanel(model)
-            : scheduleSection === "log"
-              ? renderLogDebatesPanel()
-              : renderScheduleFormPanel()
+            : renderScheduleFormPanel()
         }
       </section>
     `;
@@ -5116,10 +5096,16 @@
                 ? `<div class="debate-subline">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>`
                 : ""
             }
-            <div class="badge-row">
-              ${options.hideStatus ? "" : `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>`}
-              ${renderCategoryBadge(debate.category)}
-            </div>
+            ${
+              options.hideStatus
+                ? ""
+                : `
+                  <div class="badge-row">
+                    <span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>
+                    ${renderCategoryBadge(debate.category)}
+                  </div>
+                `
+            }
           </div>
         </div>
 
@@ -5141,7 +5127,7 @@
         </div>
 
         ${
-          options.showAdminControls && currentIsAdmin()
+          options.showAdminControls && currentIsAdmin() && (isAwaitingReview || debate.status === "scheduled")
             ? `
               <div class="admin-control-stack" data-action="hold-admin-controls">
                 ${
@@ -8139,11 +8125,7 @@
 
     if (action === "open-log-debates") {
       event.preventDefault();
-      if (isMobileViewport()) {
-        setPage("settings", { settingsSection: "lazy" });
-      } else {
-        setPage("schedule", { scheduleSection: "log" });
-      }
+      setPage("settings", { settingsSection: "lazy" });
       return;
     }
 
