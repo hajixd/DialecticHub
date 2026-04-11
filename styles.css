@@ -3877,9 +3877,28 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   letter-spacing: 0.08em;
 }
 
-.is-mobile-app .mobile-ranking-row .record-chip.draw {
-  border-color: var(--surface-divider);
-  background: rgba(255, 255, 255, 0.04);
+.is-mobile-app .mobile-ranking-record-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.is-mobile-app .mobile-ranking-record-text {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.is-mobile-app .mobile-ranking-record-text.win {
+  color: var(--green-strong);
+}
+
+.is-mobile-app .mobile-ranking-record-text.loss {
+  color: #f1a39d;
+}
+
+.is-mobile-app .mobile-ranking-record-text.draw {
   color: var(--text-soft);
 }
 

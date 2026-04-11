@@ -3887,6 +3887,14 @@
     return `${Number(player?.wins || 0)}W • ${Number(player?.losses || 0)}L • ${Number(player?.draws || 0)}D`;
   }
 
+  function renderCompactRecordLineMarkup(player) {
+    return `
+      <span class="mobile-ranking-record-text win">${Number(player?.wins || 0)}W</span>
+      <span class="mobile-ranking-record-text loss">${Number(player?.losses || 0)}L</span>
+      <span class="mobile-ranking-record-text draw">${Number(player?.draws || 0)}D</span>
+    `;
+  }
+
   function renderMobileDebateRow(debate, options = {}) {
     const isBusy = state.actionBusyKey.startsWith(`${debate.id}:`);
     const winnerName = getDebateWinnerName(debate);
@@ -4038,7 +4046,7 @@
                     avatarClassName: "profile-avatar profile-avatar-lg",
                     labelClassName: "profile-link-strong"
                   })}
-                  <div class="mobile-record-line">${renderRecordChips(player, { compact: true })}</div>
+                  <div class="mobile-row-meta mobile-ranking-record-line">${renderCompactRecordLineMarkup(player)}</div>
                 </span>
                 <span class="mobile-ranking-side">${escapeHtml(getRatingDisplayValue(player))}</span>
               </button>
