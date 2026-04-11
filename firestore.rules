@@ -9,6 +9,12 @@ service cloud.firestore {
         : '';
     }
 
+    function hajiUidFromUsername() {
+      return exists(/databases/$(database)/documents/usernames/haji)
+        ? get(/databases/$(database)/documents/usernames/haji).data.uid
+        : '';
+    }
+
     function storedUserRole(uid) {
       return exists(/databases/$(database)/documents/users/$(uid))
         ? get(/databases/$(database)/documents/users/$(uid)).data.role
@@ -19,17 +25,12 @@ service cloud.firestore {
       return storedUserRole(uid) == 'admin' || storedUserRole(uid) == 'user';
     }
 
-    function bootstrapAdmin() {
-      return signedIn()
-        && request.auth.uid == adminUidFromUsername()
-        && !hasStoredUserRole(request.auth.uid);
-    }
-
     function isAdmin() {
       return signedIn() && (
         request.auth.token.admin == true
         || storedUserRole(request.auth.uid) == 'admin'
-        || bootstrapAdmin()
+        || request.auth.uid == adminUidFromUsername()
+        || request.auth.uid == hajiUidFromUsername()
       );
     }
 

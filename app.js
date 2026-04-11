@@ -959,7 +959,8 @@
     if (explicitRole) {
       return explicitRole === "admin";
     }
-    return normalizeUsername(state.username) === "admin";
+    const normalized = normalizeUsername(state.username);
+    return normalized === "admin" || normalized === "haji";
   }
 
   function isPreviewMode() {
@@ -2161,7 +2162,8 @@
     if (explicitRole) {
       return explicitRole;
     }
-    return normalizeUsername(getNameForUid(safeUid, "")) === "admin" ? "admin" : "user";
+    const normalized = normalizeUsername(getNameForUid(safeUid, ""));
+    return normalized === "admin" || normalized === "haji" ? "admin" : "user";
   }
 
   function getAdminManagedUsers() {
