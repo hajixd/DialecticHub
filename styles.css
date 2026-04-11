@@ -3612,7 +3612,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 }
 
 .is-mobile-app .panel-scroll.mobile-page-scroll {
-  max-height: min(58svh, 560px);
+  max-height: min(72svh, calc(100svh - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - 136px));
   padding-right: 2px;
   -webkit-overflow-scrolling: touch;
 }
