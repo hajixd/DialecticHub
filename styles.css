@@ -461,6 +461,42 @@ html[data-theme="light"] .avatar-chip {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.draft-participant-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.draft-format-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.draft-format-tabs .tab-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.debate-team-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.debate-team-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--surface-divider);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.debate-team-fields {
+  display: grid;
+  gap: 10px;
+}
+
 .leaderboard-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -981,6 +1017,8 @@ textarea:focus {
 .winner-btn-title {
   font-size: 13px;
   font-weight: 700;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .winner-btn-note {
@@ -2452,6 +2490,34 @@ textarea:focus {
   line-height: 1.1;
 }
 
+.team-badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.team-badge-group.is-team {
+  display: grid;
+  gap: 8px;
+}
+
+.team-badge-group.is-empty {
+  color: var(--text-dim);
+}
+
+.team-badge-group.is-team .team-joiner {
+  display: none;
+}
+
+.team-joiner {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .person-badge.me {
   border-color: rgba(212, 176, 103, 0.28);
   background: rgba(212, 176, 103, 0.11);
@@ -2490,6 +2556,15 @@ textarea:focus {
   min-width: 82px;
   min-height: 36px;
   padding: 0 20px;
+}
+
+.people-row .team-badge-group {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.people-row .team-badge-group .person-badge {
+  width: 100%;
 }
 
 .people-row .mini-tag {
@@ -2535,6 +2610,18 @@ textarea:focus {
 
 .detail-row strong .profile-identity-inline {
   display: inline-flex;
+  max-width: 100%;
+}
+
+.detail-row strong .team-inline-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.team-inline-identity .profile-identity-inline {
   max-width: 100%;
 }
 
@@ -2985,6 +3072,7 @@ html[data-theme="light"] body:not(.is-mobile-app) .archive-page .detail-row {
   .topbar,
   .section-grid,
   .field-row,
+  .debate-team-grid,
   .side-content {
     grid-template-columns: 1fr;
   }
@@ -3661,6 +3749,15 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   gap: 8px;
 }
 
+.is-mobile-app .mobile-row-people .team-badge-group {
+  min-width: 0;
+  width: 100%;
+}
+
+.is-mobile-app .mobile-row-people .team-badge-group .person-badge {
+  width: 100%;
+}
+
 .is-mobile-app .mobile-row-people .person-badge {
   flex: 1 1 0;
   min-width: 0;
@@ -3728,6 +3825,11 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   width: 100%;
   gap: 8px;
+}
+
+.is-mobile-app .mobile-debate-people .team-badge-group {
+  min-width: 0;
+  width: 100%;
 }
 
 .is-mobile-app .mobile-debate-category-row {

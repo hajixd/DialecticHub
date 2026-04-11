@@ -55,6 +55,20 @@
     { id: "politics", label: "Politics" },
     { id: "misc", label: "Misc" }
   ];
+  const DEBATE_TEAM_OPTIONS = [
+    { id: 1, label: "1v1" },
+    { id: 2, label: "2v2" }
+  ];
+  const DEBATE_PARTICIPANT_FIELD_META = [
+    { field: "debaterAUid", queryField: "debaterAQuery", nameField: "debaterAName", team: "a", slot: 1, label: "Team A" },
+    { field: "debaterA2Uid", queryField: "debaterA2Query", nameField: "debaterA2Name", team: "a", slot: 2, label: "Team A Teammate" },
+    { field: "debaterBUid", queryField: "debaterBQuery", nameField: "debaterBName", team: "b", slot: 1, label: "Team B" },
+    { field: "debaterB2Uid", queryField: "debaterB2Query", nameField: "debaterB2Name", team: "b", slot: 2, label: "Team B Teammate" }
+  ];
+  const PRIMARY_DEBATE_PARTICIPANT_FIELDS = DEBATE_PARTICIPANT_FIELD_META
+    .filter((entry) => entry.slot === 1)
+    .map((entry) => entry.field);
+  const EXTENDED_DEBATE_PARTICIPANT_FIELDS = DEBATE_PARTICIPANT_FIELD_META.map((entry) => entry.field);
 
   const state = {
     bootResolved: false,
@@ -1717,15 +1731,14 @@
           getDebateCategoryLabel(debate.category),
           debate.description,
           debate.moderator,
-          debate.debaterAName,
-          debate.debaterBName
+          ...getDebateParticipantNames(debate)
         ]
           .join(" ")
           .toLowerCase();
 
         if (!haystack.includes(needle)) return;
 
-        const people = [formatDisplayName(debate.debaterAName || "", ""), formatDisplayName(debate.debaterBName || "", "")]
+        const people = [getDebateTeamLabel(debate, "a", "Team A"), getDebateTeamLabel(debate, "b", "Team B")]
           .filter(Boolean)
           .join(" vs ");
 
@@ -2082,13 +2095,18 @@
     return {
       topic: "",
       category: "",
+      teamSize: 1,
       scheduledFor: "",
       moderator: "",
       description: "",
       debaterAUid: currentUid || "",
+      debaterA2Uid: "",
       debaterBUid: "",
+      debaterB2Uid: "",
       debaterAQuery: "",
-      debaterBQuery: ""
+      debaterA2Query: "",
+      debaterBQuery: "",
+      debaterB2Query: ""
     };
   }
 
@@ -2096,6 +2114,7 @@
     return {
       topic: "",
       category: "",
+      teamSize: 1,
       scheduledFor: "",
       moderator: "",
       description: "",
@@ -2104,9 +2123,13 @@
       videoClipStart: "",
       videoClipEnd: "",
       debaterAUid: "",
+      debaterA2Uid: "",
       debaterBUid: "",
+      debaterB2Uid: "",
       debaterAQuery: "",
+      debaterA2Query: "",
       debaterBQuery: "",
+      debaterB2Query: "",
       result: "a"
     };
   }
@@ -2115,11 +2138,68 @@
     return owner === "lazy" ? state.lazyDebateDraft : state.scheduleDraft;
   }
 
-  function getDebaterQueryField(field) {
+  function normalizeDebateTeamSize(value, fallback = 1) {
+    const numericValue = Number(value);
+    if (numericValue === 2) return 2;
+    if (numericValue === 1) return 1;
+    return Number(fallback) === 2 ? 2 : 1;
+  }
+
+  function getDraftParticipantMeta(field) {
     const safeField = String(field || "").trim();
-    if (safeField === "debaterAUid") return "debaterAQuery";
-    if (safeField === "debaterBUid") return "debaterBQuery";
-    return "";
+    return DEBATE_PARTICIPANT_FIELD_META.find((entry) => entry.field === safeField) || null;
+  }
+
+  function getActiveDraftParticipantFields(teamSize = 1) {
+    return normalizeDebateTeamSize(teamSize, 1) === 2
+      ? [...EXTENDED_DEBATE_PARTICIPANT_FIELDS]
+      : [...PRIMARY_DEBATE_PARTICIPANT_FIELDS];
+  }
+
+  function getDraftTeamParticipantFields(teamId, teamSize = 1) {
+    const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
+    return getActiveDraftParticipantFields(teamSize).filter((field) => {
+      return getDraftParticipantMeta(field)?.team === safeTeamId;
+    });
+  }
+
+  function getDraftTeamSize(owner = "schedule") {
+    return normalizeDebateTeamSize(getDraftState(owner)?.teamSize, 1);
+  }
+
+  function clearDraftParticipantField(draft, field) {
+    if (!draft) return;
+    const safeField = String(field || "").trim();
+    const meta = getDraftParticipantMeta(safeField);
+    if (!safeField) return;
+    draft[safeField] = "";
+    if (meta?.queryField) {
+      draft[meta.queryField] = "";
+    }
+  }
+
+  function clearInactiveDraftParticipants(draft) {
+    if (!draft) return;
+    const activeFields = new Set(getActiveDraftParticipantFields(draft.teamSize));
+    DEBATE_PARTICIPANT_FIELD_META.forEach((entry) => {
+      if (!activeFields.has(entry.field)) {
+        draft[entry.field] = "";
+        draft[entry.queryField] = "";
+      }
+    });
+  }
+
+  function getDraftBlockedParticipantUids(draft, field) {
+    if (!draft) return [];
+    const safeField = String(field || "").trim();
+    return getActiveDraftParticipantFields(draft.teamSize)
+      .filter((entryField) => entryField !== safeField)
+      .map((entryField) => String(draft[entryField] || "").trim())
+      .filter(Boolean);
+  }
+
+  function getDebaterQueryField(field) {
+    return getDraftParticipantMeta(field)?.queryField || "";
   }
 
   function getDebaterSelectKey(owner, field) {
@@ -2131,28 +2211,55 @@
   function coerceDebaterDraftUniqueness(draft, field) {
     if (!draft) return;
 
-    if (field === "debaterAUid" && draft.debaterAUid && draft.debaterAUid === draft.debaterBUid) {
-      draft.debaterBUid = "";
-      draft.debaterBQuery = "";
+    clearInactiveDraftParticipants(draft);
+
+    const activeFields = getActiveDraftParticipantFields(draft.teamSize);
+    const safeField = activeFields.includes(String(field || "").trim()) ? String(field || "").trim() : "";
+
+    if (safeField) {
+      const selectedUid = String(draft[safeField] || "").trim();
+      if (!selectedUid) return;
+      activeFields.forEach((entryField) => {
+        if (entryField !== safeField && String(draft[entryField] || "").trim() === selectedUid) {
+          clearDraftParticipantField(draft, entryField);
+        }
+      });
+      return;
     }
 
-    if (field === "debaterBUid" && draft.debaterBUid && draft.debaterBUid === draft.debaterAUid) {
-      draft.debaterBUid = "";
-      draft.debaterBQuery = "";
-    }
+    const seen = new Set();
+    activeFields.forEach((entryField) => {
+      const value = String(draft[entryField] || "").trim();
+      if (!value) return;
+      if (seen.has(value)) {
+        clearDraftParticipantField(draft, entryField);
+        return;
+      }
+      seen.add(value);
+    });
   }
 
-  function findDirectoryUserByNormalizedUsername(username, blockedUid = "") {
+  function findDirectoryUserByNormalizedUsername(username, blockedUids = []) {
     const safeName = normalizeUsername(username);
-    const safeBlockedUid = String(blockedUid || "").trim();
+    const blockedSet = new Set(
+      (Array.isArray(blockedUids) ? blockedUids : [blockedUids])
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean)
+    );
     if (!safeName) return null;
 
     return (
       state.directory.find((entry) => {
         const uid = String(entry.uid || "").trim();
-        return uid && uid !== safeBlockedUid && normalizeUsername(entry.username || entry.name || "") === safeName;
+        return uid && !blockedSet.has(uid) && normalizeUsername(entry.username || entry.name || "") === safeName;
       }) || null
     );
+  }
+
+  function directoryHasNormalizedUsername(username) {
+    const safeName = normalizeUsername(username);
+    if (!safeName) return false;
+    return state.directory.some((entry) => normalizeUsername(entry.username || entry.name || "") === safeName);
   }
 
   function getDraftDebaterQueryValue(owner, field) {
@@ -2200,9 +2307,8 @@
 
     const nextRawValue = String(rawValue || "");
     const normalizedQuery = normalizeUsername(nextRawValue);
-    const otherField = field === "debaterAUid" ? "debaterBUid" : "debaterAUid";
-    const otherUid = String(draft[otherField] || "").trim();
-    const exactEntry = normalizedQuery ? findDirectoryUserByNormalizedUsername(normalizedQuery, otherUid) : null;
+    const blockedUids = getDraftBlockedParticipantUids(draft, field);
+    const exactEntry = normalizedQuery ? findDirectoryUserByNormalizedUsername(normalizedQuery, blockedUids) : null;
 
     draft[queryField] = nextRawValue;
     draft[field] = exactEntry ? String(exactEntry.uid || "").trim() : "";
@@ -2225,9 +2331,8 @@
       return "";
     }
 
-    const otherField = field === "debaterAUid" ? "debaterBUid" : "debaterAUid";
-    const otherUid = String(draft[otherField] || "").trim();
-    const exactEntry = findDirectoryUserByNormalizedUsername(normalizedQuery, otherUid);
+    const blockedUids = getDraftBlockedParticipantUids(draft, field);
+    const exactEntry = findDirectoryUserByNormalizedUsername(normalizedQuery, blockedUids);
     return exactEntry ? String(exactEntry.uid || "").trim() : makePlaceholderUid(normalizedQuery);
   }
 
@@ -2236,6 +2341,12 @@
     if (!draft) return;
     if (field === "category") {
       draft[field] = normalizeDebateCategory(value, "");
+      return;
+    }
+    if (field === "teamSize") {
+      draft.teamSize = normalizeDebateTeamSize(value, 1);
+      clearInactiveDraftParticipants(draft);
+      coerceDebaterDraftUniqueness(draft);
       return;
     }
 
@@ -2889,6 +3000,9 @@
     ) {
       state.scheduleDraft.debaterBUid = "";
     }
+
+    clearInactiveDraftParticipants(state.scheduleDraft);
+    coerceDebaterDraftUniqueness(state.scheduleDraft);
   }
 
   function getDebateStatus(debate) {
@@ -2905,6 +3019,81 @@
     return { label: "Scheduled", className: "status-scheduled" };
   }
 
+  function getDebateTeamSize(debateOrValue, fallback = 1) {
+    const rawValue =
+      debateOrValue && typeof debateOrValue === "object"
+        ? debateOrValue.teamSize
+        : debateOrValue;
+    return normalizeDebateTeamSize(rawValue, fallback);
+  }
+
+  function getDebateParticipantEntries(debate, options = {}) {
+    const safeDebate = debate || {};
+    const teamSize = getDebateTeamSize(safeDebate, 1);
+    const includeEmpty = Boolean(options.includeEmpty);
+    return getActiveDraftParticipantFields(teamSize)
+      .map((field) => {
+        const meta = getDraftParticipantMeta(field);
+        if (!meta) return null;
+        const uid = String(safeDebate[field] || "").trim();
+        const name = normalizeUsername(safeDebate[meta.nameField] || "") || getPlaceholderUsername(uid) || "";
+        if (!includeEmpty && !uid) {
+          return null;
+        }
+        return {
+          field,
+          uid,
+          name,
+          team: meta.team,
+          slot: meta.slot
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function getDebateParticipantNames(debate) {
+    return getDebateParticipantEntries(debate)
+      .map((entry) => formatDisplayName(entry.name || entry.uid || "", "Debater"))
+      .filter(Boolean);
+  }
+
+  function getDebateTeamParticipants(debate, teamId) {
+    const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
+    return getDebateParticipantEntries(debate).filter((entry) => entry.team === safeTeamId);
+  }
+
+  function formatDebateTeamLabel(entries, fallback = "Team") {
+    const safeEntries = (Array.isArray(entries) ? entries : [])
+      .map((entry) => formatDisplayName(entry?.name || entry?.uid || "", ""))
+      .filter(Boolean);
+    return safeEntries.join(" & ") || fallback;
+  }
+
+  function getDebateTeamLabel(debate, teamId, fallback = "") {
+    const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
+    const defaultLabel = fallback || (safeTeamId === "a" ? "Team A" : "Team B");
+    return formatDebateTeamLabel(getDebateTeamParticipants(debate, safeTeamId), defaultLabel);
+  }
+
+  function getDebateResultTeamLabel(debate, result, fallback = "") {
+    if (result === "a" || result === "b") {
+      return getDebateTeamLabel(debate, result, fallback || (result === "a" ? "Team A" : "Team B"));
+    }
+    return fallback || "";
+  }
+
+  function getDebateRatingTeams(debate) {
+    const safeDebate = debate || {};
+    const teamSize = getDebateTeamSize(safeDebate, 1);
+    const teamA = getDebateTeamParticipants(safeDebate, "a");
+    const teamB = getDebateTeamParticipants(safeDebate, "b");
+    if (!teamA.length || !teamB.length) return null;
+    if (teamSize === 2 && (teamA.length < 2 || teamB.length < 2)) return null;
+    const allUids = [...teamA, ...teamB].map((entry) => String(entry.uid || "").trim()).filter(Boolean);
+    if (!allUids.length || new Set(allUids).size !== allUids.length) return null;
+    return { teamSize, teamA, teamB };
+  }
+
   function debateMatchesSearch(debate, searchTerm) {
     if (!searchTerm) return true;
     const haystack = [
@@ -2912,8 +3101,7 @@
       getDebateCategoryLabel(debate.category),
       debate.description,
       debate.moderator,
-      debate.debaterAName,
-      debate.debaterBName,
+      ...getDebateParticipantNames(debate),
       debate.winnerName,
       debate.createdByName
     ]
@@ -2936,7 +3124,7 @@
   function debateIncludesUser(debate, uid) {
     const safeUid = String(uid || "").trim();
     if (!safeUid) return false;
-    return safeUid === String(debate.debaterAUid || "").trim() || safeUid === String(debate.debaterBUid || "").trim();
+    return getDebateParticipantEntries(debate).some((entry) => entry.uid === safeUid);
   }
 
   function filterDebatesByCategory(debates, categoryId) {
@@ -2955,10 +3143,12 @@
     });
   }
 
-  function computeLeaderboard(debates, options = {}) {
+  function runDebateRatings(debates, options = {}) {
     const directoryMap = getDirectoryMap();
     const players = new Map();
     const selectedCategory = options.category ? normalizeDebateCategory(options.category) : "";
+    const targetUid = String(options.uid || "").trim();
+    const history = [];
 
     function ensurePlayer(uid, fallbackName) {
       const safeUid = String(uid || "").trim();
@@ -2986,168 +3176,14 @@
       return player;
     }
 
-    const ratedDebates = debates
-      .filter((debate) => {
-        return (
-          debate.status === "resolved" &&
-          ["a", "b", "draw"].includes(String(debate.result || "")) &&
-          String(debate.debaterAUid || "").trim() &&
-          String(debate.debaterBUid || "").trim() &&
-          (!selectedCategory || normalizeDebateCategory(debate.category) === selectedCategory)
-        );
-      })
-      .sort(compareDebatesAscending);
-
-    const ratingPeriods = [];
-    let currentPeriod = null;
-
-    ratedDebates.forEach((debate) => {
-      const debateMillis = getDebateChronologyMillis(debate);
-      const periodKey = getFideRatingPeriodKey(debateMillis);
-
-      if (!currentPeriod || currentPeriod.key !== periodKey) {
-        currentPeriod = { key: periodKey, debates: [] };
-        ratingPeriods.push(currentPeriod);
-      }
-
-      currentPeriod.debates.push({ debate, debateMillis });
-    });
-
-    ratingPeriods.forEach((period) => {
-      const periodSnapshots = new Map();
-      const periodChanges = new Map();
-      let periodEndMillis = 0;
-
-      function getPeriodSnapshot(player) {
-        if (!player) return null;
-        if (!periodSnapshots.has(player.uid)) {
-          periodSnapshots.set(player.uid, {
-            uid: player.uid,
-            rating: player.rating,
-            debates: player.debates,
-            reached2400: Boolean(player.reached2400)
-          });
-        }
-        return periodSnapshots.get(player.uid);
-      }
-
-      function getPeriodChange(uid) {
-        const safeUid = String(uid || "").trim();
-        if (!periodChanges.has(safeUid)) {
-          periodChanges.set(safeUid, {
-            deltaSum: 0,
-            games: 0
-          });
-        }
-        return periodChanges.get(safeUid);
-      }
-
-      period.debates.forEach(({ debate, debateMillis }) => {
-        const playerA = ensurePlayer(debate.debaterAUid, debate.debaterAName);
-        const playerB = ensurePlayer(debate.debaterBUid, debate.debaterBName);
-        if (!playerA || !playerB) return;
-
-        const snapshotA = getPeriodSnapshot(playerA);
-        const snapshotB = getPeriodSnapshot(playerB);
-        const expectedA = getFideExpectedScore(snapshotA.rating, snapshotB.rating, debateMillis);
-        const expectedB = getFideExpectedScore(snapshotB.rating, snapshotA.rating, debateMillis);
-        const scoreA = debate.result === "a" ? 1 : debate.result === "b" ? 0 : 0.5;
-        const scoreB = 1 - scoreA;
-        const playerAChange = getPeriodChange(playerA.uid);
-        const playerBChange = getPeriodChange(playerB.uid);
-
-        playerAChange.deltaSum += scoreA - expectedA;
-        playerAChange.games += 1;
-        playerBChange.deltaSum += scoreB - expectedB;
-        playerBChange.games += 1;
-        playerA.debates += 1;
-        playerB.debates += 1;
-        playerA.lastDebateAt = Math.max(playerA.lastDebateAt, debateMillis);
-        playerB.lastDebateAt = Math.max(playerB.lastDebateAt, debateMillis);
-        periodEndMillis = Math.max(periodEndMillis, debateMillis);
-
-        if (debate.result === "a") {
-          playerA.wins += 1;
-          playerB.losses += 1;
-        } else if (debate.result === "b") {
-          playerB.wins += 1;
-          playerA.losses += 1;
-        } else {
-          playerA.draws += 1;
-          playerB.draws += 1;
-        }
-      });
-
-      periodChanges.forEach((change, uid) => {
-        const player = players.get(uid);
-        const snapshot = periodSnapshots.get(uid);
-        if (!player || !snapshot || !change.games) return;
-
-        const kFactor = getFideKFactor(snapshot, change.games, periodEndMillis);
-        const ratingChange = roundHalfAwayFromZero(change.deltaSum * kFactor);
-
-        player.rating += ratingChange;
-        if (player.rating >= FIDE_HIGH_RATING_THRESHOLD) {
-          player.reached2400 = true;
-        }
-      });
-    });
-
-    return [...players.values()].map((player) => {
-      const ratingRounded = roundHalfAwayFromZero(player.rating);
-      const isPublishedRating = player.debates >= MIN_RANKED_DEBATES;
-      return {
-        ...player,
-        ratingRounded,
-        isPublishedRating,
-        isRanked: isPublishedRating,
-        recordLabel: `${player.wins}-${player.losses}${player.draws ? `-${player.draws}` : ""}`
-      };
-    });
-  }
-
-  function buildRatingHistoryForUser(debates, options = {}) {
-    const safeUid = String(options.uid || "").trim();
-    const selectedCategory = options.category ? normalizeDebateCategory(options.category) : "";
-    if (!safeUid || !selectedCategory) return [];
-
-    const directoryMap = getDirectoryMap();
-    const players = new Map();
-    const history = [];
-
-    function ensurePlayer(uid, fallbackName) {
-      const playerUid = String(uid || "").trim();
-      if (!playerUid) return null;
-
-      if (!players.has(playerUid)) {
-        players.set(playerUid, {
-          uid: playerUid,
-          name: directoryMap.get(playerUid) || normalizeUsername(fallbackName || "") || "debater",
-          rating: ELO_BASELINE,
-          reached2400: ELO_BASELINE >= FIDE_HIGH_RATING_THRESHOLD,
-          wins: 0,
-          losses: 0,
-          draws: 0,
-          debates: 0
-        });
-      }
-
-      const player = players.get(playerUid);
-      const nextName = directoryMap.get(playerUid) || normalizeUsername(fallbackName || "");
-      if (nextName) {
-        player.name = nextName;
-      }
-      return player;
-    }
-
     const ratedDebates = (Array.isArray(debates) ? debates : [])
       .filter((debate) => {
+        const teams = getDebateRatingTeams(debate);
         return (
           debate.status === "resolved" &&
           ["a", "b", "draw"].includes(String(debate.result || "")) &&
-          String(debate.debaterAUid || "").trim() &&
-          String(debate.debaterBUid || "").trim() &&
-          normalizeDebateCategory(debate.category) === selectedCategory
+          Boolean(teams) &&
+          (!selectedCategory || normalizeDebateCategory(debate.category) === selectedCategory)
         );
       })
       .sort(compareDebatesAscending);
@@ -3187,51 +3223,80 @@
       }
 
       function getPeriodChange(uid) {
-        const playerUid = String(uid || "").trim();
-        if (!periodChanges.has(playerUid)) {
-          periodChanges.set(playerUid, {
+        const safeUid = String(uid || "").trim();
+        if (!periodChanges.has(safeUid)) {
+          periodChanges.set(safeUid, {
             deltaSum: 0,
             games: 0
           });
         }
-        return periodChanges.get(playerUid);
+        return periodChanges.get(safeUid);
       }
 
       period.debates.forEach(({ debate, debateMillis }) => {
-        const playerA = ensurePlayer(debate.debaterAUid, debate.debaterAName);
-        const playerB = ensurePlayer(debate.debaterBUid, debate.debaterBName);
-        if (!playerA || !playerB) return;
+        const teams = getDebateRatingTeams(debate);
+        if (!teams) return;
 
-        const snapshotA = getPeriodSnapshot(playerA);
-        const snapshotB = getPeriodSnapshot(playerB);
-        const expectedA = getFideExpectedScore(snapshotA.rating, snapshotB.rating, debateMillis);
-        const expectedB = getFideExpectedScore(snapshotB.rating, snapshotA.rating, debateMillis);
+        const teamAPlayers = teams.teamA
+          .map((entry) => ensurePlayer(entry.uid, entry.name))
+          .filter(Boolean);
+        const teamBPlayers = teams.teamB
+          .map((entry) => ensurePlayer(entry.uid, entry.name))
+          .filter(Boolean);
+        if (!teamAPlayers.length || !teamBPlayers.length) return;
+
+        const snapshotA = teamAPlayers.map((player) => getPeriodSnapshot(player)).filter(Boolean);
+        const snapshotB = teamBPlayers.map((player) => getPeriodSnapshot(player)).filter(Boolean);
+        const teamARating = snapshotA.reduce((sum, entry) => sum + Number(entry.rating || 0), 0) / snapshotA.length;
+        const teamBRating = snapshotB.reduce((sum, entry) => sum + Number(entry.rating || 0), 0) / snapshotB.length;
+        const expectedA = getFideExpectedScore(teamARating, teamBRating, debateMillis);
+        const expectedB = getFideExpectedScore(teamBRating, teamARating, debateMillis);
         const scoreA = debate.result === "a" ? 1 : debate.result === "b" ? 0 : 0.5;
         const scoreB = 1 - scoreA;
-        const playerAChange = getPeriodChange(playerA.uid);
-        const playerBChange = getPeriodChange(playerB.uid);
-
-        playerAChange.deltaSum += scoreA - expectedA;
-        playerAChange.games += 1;
-        playerBChange.deltaSum += scoreB - expectedB;
-        playerBChange.games += 1;
-        playerA.debates += 1;
-        playerB.debates += 1;
+        teamAPlayers.forEach((player) => {
+          const playerChange = getPeriodChange(player.uid);
+          playerChange.deltaSum += scoreA - expectedA;
+          playerChange.games += 1;
+          player.debates += 1;
+          player.lastDebateAt = Math.max(player.lastDebateAt, debateMillis);
+        });
+        teamBPlayers.forEach((player) => {
+          const playerChange = getPeriodChange(player.uid);
+          playerChange.deltaSum += scoreB - expectedB;
+          playerChange.games += 1;
+          player.debates += 1;
+          player.lastDebateAt = Math.max(player.lastDebateAt, debateMillis);
+        });
         periodEndMillis = Math.max(periodEndMillis, debateMillis);
 
-        if (playerA.uid === safeUid || playerB.uid === safeUid) {
-          targetPlayedThisPeriod = true;
+        if (debate.result === "a") {
+          teamAPlayers.forEach((player) => {
+            player.wins += 1;
+          });
+          teamBPlayers.forEach((player) => {
+            player.losses += 1;
+          });
+        } else if (debate.result === "b") {
+          teamBPlayers.forEach((player) => {
+            player.wins += 1;
+          });
+          teamAPlayers.forEach((player) => {
+            player.losses += 1;
+          });
+        } else {
+          teamAPlayers.forEach((player) => {
+            player.draws += 1;
+          });
+          teamBPlayers.forEach((player) => {
+            player.draws += 1;
+          });
         }
 
-        if (debate.result === "a") {
-          playerA.wins += 1;
-          playerB.losses += 1;
-        } else if (debate.result === "b") {
-          playerB.wins += 1;
-          playerA.losses += 1;
-        } else {
-          playerA.draws += 1;
-          playerB.draws += 1;
+        if (
+          targetUid &&
+          [...teamAPlayers, ...teamBPlayers].some((player) => player.uid === targetUid)
+        ) {
+          targetPlayedThisPeriod = true;
         }
       });
 
@@ -3249,24 +3314,47 @@
         }
       });
 
-      if (!targetPlayedThisPeriod) return;
-
-      const targetPlayer = players.get(safeUid);
-      if (!targetPlayer) return;
-
-      history.push({
-        at: periodEndMillis,
-        rating: targetPlayer.rating,
-        ratingRounded: roundHalfAwayFromZero(targetPlayer.rating),
-        debates: targetPlayer.debates,
-        wins: targetPlayer.wins,
-        losses: targetPlayer.losses,
-        draws: targetPlayer.draws,
-        isPublishedRating: targetPlayer.debates >= MIN_RANKED_DEBATES
-      });
+      if (targetUid && targetPlayedThisPeriod && players.has(targetUid)) {
+        const targetPlayer = players.get(targetUid);
+        history.push({
+          at: periodEndMillis || Date.now(),
+          rating: targetPlayer.rating,
+          ratingRounded: roundHalfAwayFromZero(targetPlayer.rating),
+          debates: targetPlayer.debates,
+          wins: targetPlayer.wins,
+          losses: targetPlayer.losses,
+          draws: targetPlayer.draws,
+          isPublishedRating: targetPlayer.debates >= MIN_RANKED_DEBATES
+        });
+      }
     });
 
-    return history;
+    const rankedPlayers = [...players.values()].map((player) => {
+      const ratingRounded = roundHalfAwayFromZero(player.rating);
+      const isPublishedRating = player.debates >= MIN_RANKED_DEBATES;
+      return {
+        ...player,
+        ratingRounded,
+        isPublishedRating,
+        isRanked: isPublishedRating,
+        recordLabel: `${player.wins}-${player.losses}${player.draws ? `-${player.draws}` : ""}`
+      };
+    });
+
+    return {
+      players: rankedPlayers,
+      history
+    };
+  }
+
+  function computeLeaderboard(debates, options = {}) {
+    return runDebateRatings(debates, options).players;
+  }
+
+  function buildRatingHistoryForUser(debates, options = {}) {
+    const selectedCategory = options.category ? normalizeDebateCategory(options.category) : "";
+    if (!selectedCategory) return [];
+    return runDebateRatings(debates, options).history;
   }
 
   function getFallbackPlayerSnapshot(uid, name) {
@@ -3678,10 +3766,6 @@
     const winnerName = getDebateWinnerName(debate);
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
-    const aWinner = debate.status === "resolved" && debate.result === "a";
-    const bWinner = debate.status === "resolved" && debate.result === "b";
-    const aLoser = debate.status === "resolved" && debate.result === "b";
-    const bLoser = debate.status === "resolved" && debate.result === "a";
     const resultLabel = isAwaitingReview
       ? `Submitted: ${getDebateSubmittedResultLabel(debate)}`
       : debate.status === "resolved"
@@ -3704,11 +3788,7 @@
         >
           <strong class="mobile-row-title">${escapeHtml(debate.topic || "Untitled debate")}</strong>
           <div class="mobile-row-meta">${escapeHtml(formatDateTime(debate.scheduledFor))}</div>
-          <div class="people-row mobile-row-people">
-            ${renderStaticPersonBadge(debate.debaterAName, debate.debaterAUid, { isWinner: aWinner, isLoser: aLoser })}
-            <span class="mini-tag">vs</span>
-            ${renderStaticPersonBadge(debate.debaterBName, debate.debaterBUid, { isWinner: bWinner, isLoser: bLoser })}
-          </div>
+          ${renderDebatePeopleRow(debate, { mobile: true, static: true })}
           <div class="mobile-row-foot">
             ${showStatusChip ? `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>` : ""}
             ${renderCategoryBadge(debate.category, categoryClassName)}
@@ -3757,7 +3837,7 @@
                           data-outcome="a"
                           ${isBusy ? "disabled" : ""}
                         >
-                          ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
+                          ${escapeHtml(getDebateTeamLabel(debate, "a", "Team A"))} wins
                         </button>
                         <button
                           class="result-btn win"
@@ -3767,7 +3847,7 @@
                           data-outcome="b"
                           ${isBusy ? "disabled" : ""}
                         >
-                          ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
+                          ${escapeHtml(getDebateTeamLabel(debate, "b", "Team B"))} wins
                         </button>
                         <button
                           class="result-btn draw"
@@ -3928,16 +4008,12 @@
       `;
     }
 
-    const aWinner = debate.status === "resolved" && debate.result === "a";
-    const bWinner = debate.status === "resolved" && debate.result === "b";
-    const aLoser = debate.status === "resolved" && debate.result === "b";
-    const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
     const loserName = debate.status === "resolved"
       ? debate.result === "a"
-        ? formatDisplayName(debate.debaterBName || "debater", "Debater")
+        ? getDebateTeamLabel(debate, "b", "Team B")
         : debate.result === "b"
-          ? formatDisplayName(debate.debaterAName || "debater", "Debater")
+          ? getDebateTeamLabel(debate, "a", "Team A")
           : ""
       : "";
     const debateStatus = getDebateStatus(debate);
@@ -3970,11 +4046,7 @@
           <div class="badge-row mobile-debate-category-row">
             ${renderCategoryBadge(debate.category, "category-tag-wide mobile-debate-category-tag")}
           </div>
-          <div class="people-row mobile-debate-people">
-            ${renderPersonBadge(debate.debaterAName, debate.debaterAUid, { isWinner: aWinner, isLoser: aLoser })}
-            <span class="mini-tag">vs</span>
-            ${renderPersonBadge(debate.debaterBName, debate.debaterBUid, { isWinner: bWinner, isLoser: bLoser })}
-          </div>
+          ${renderDebatePeopleRow(debate, { mobile: true, className: "mobile-debate-people" })}
           <div class="mobile-inline-stats">
             <article class="mobile-stat">
               <span class="summary-label">Scheduled</span>
@@ -3989,14 +4061,14 @@
               <strong>${
                 isAwaitingReview || debate.result === "draw"
                   ? escapeHtml(resultDetailValue)
-                  : renderInlineProfileIdentity(resultDetailValue, debate.result === "a" ? debate.debaterAUid : debate.debaterBUid)
+                  : renderTeamIdentityInline(debate, debate.result)
               }</strong>
             </article>
             <article class="mobile-stat${loserToneClass}">
               <span class="summary-label">Loser</span>
               <strong>${
                 loserName
-                  ? renderInlineProfileIdentity(loserName, debate.result === "a" ? debate.debaterBUid : debate.debaterAUid)
+                  ? renderTeamIdentityInline(debate, debate.result === "a" ? "b" : "a")
                   : "N/A"
               }</strong>
             </article>
@@ -4059,6 +4131,80 @@
           </form>
         </section>
       </section>
+    `;
+  }
+
+  function renderDraftTeamSizeToggle(owner = "schedule") {
+    const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const activeTeamSize = getDraftTeamSize(safeOwner);
+    return `
+      <label class="field">
+        <span>Format</span>
+        <div class="leaderboard-tabs draft-format-tabs" role="tablist" aria-label="Debate format">
+          ${DEBATE_TEAM_OPTIONS.map((option) => {
+            const isActive = option.id === activeTeamSize;
+            return `
+              <button
+                class="tab-btn${isActive ? " is-active" : ""}"
+                type="button"
+                role="tab"
+                aria-selected="${isActive ? "true" : "false"}"
+                data-action="set-draft-team-size"
+                data-draft-owner="${escapeHtml(safeOwner)}"
+                data-value="${escapeHtml(String(option.id))}"
+              >
+                ${escapeHtml(option.label)}
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <input type="hidden" name="teamSize" value="${escapeHtml(String(activeTeamSize))}" />
+      </label>
+    `;
+  }
+
+  function renderDraftParticipantFields(owner = "schedule") {
+    const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const draft = getDraftState(safeOwner);
+    const teamSize = getDraftTeamSize(safeOwner);
+    if (!draft) return "";
+
+    function renderTeamShell(teamId) {
+      const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
+      const teamLabel = safeTeamId === "b" ? "Team B" : "Team A";
+      const fields = getDraftTeamParticipantFields(safeTeamId, teamSize);
+      return `
+        <section class="debate-team-card">
+          <span class="summary-label">${escapeHtml(teamLabel)}</span>
+          <div class="debate-team-fields">
+            ${fields.map((field) => {
+              const meta = getDraftParticipantMeta(field);
+              const selectLabel = fields.length > 1
+                ? meta?.slot === 1
+                  ? "Debater 1"
+                  : "Debater 2"
+                : "Debater";
+              return renderDebaterSelect({
+                label: selectLabel,
+                field,
+                selectedUid: draft[field],
+                blockedUids: getDraftBlockedParticipantUids(draft, field),
+                owner: safeOwner
+              });
+            }).join("")}
+          </div>
+        </section>
+      `;
+    }
+
+    return `
+      <div class="draft-participant-shell" data-draft-participants-owner="${escapeHtml(safeOwner)}">
+        ${renderDraftTeamSizeToggle(safeOwner)}
+        <div class="debate-team-grid${teamSize === 2 ? " is-2v2" : ""}">
+          ${renderTeamShell("a")}
+          ${renderTeamShell("b")}
+        </div>
+      </div>
     `;
   }
 
@@ -4132,22 +4278,7 @@
             />
           </label>
         </div>
-        <div class="field-row">
-          ${renderDebaterSelect({
-            label: "Debater A",
-            field: "debaterAUid",
-            selectedUid: lazyDraft.debaterAUid,
-            otherUid: lazyDraft.debaterBUid,
-            owner: "lazy"
-          })}
-          ${renderDebaterSelect({
-            label: "Debater B",
-            field: "debaterBUid",
-            selectedUid: lazyDraft.debaterBUid,
-            otherUid: lazyDraft.debaterAUid,
-            owner: "lazy"
-          })}
-        </div>
+        ${renderDraftParticipantFields("lazy")}
         <label class="field">
           <span>Moderator</span>
           <input
@@ -4207,20 +4338,7 @@
             />
           </label>
           ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
-          <div class="field-row">
-            ${renderDebaterSelect({
-              label: "Debater A",
-              field: "debaterAUid",
-              selectedUid: state.scheduleDraft.debaterAUid,
-              otherUid: state.scheduleDraft.debaterBUid
-            })}
-            ${renderDebaterSelect({
-              label: "Debater B",
-              field: "debaterBUid",
-              selectedUid: state.scheduleDraft.debaterBUid,
-              otherUid: state.scheduleDraft.debaterAUid
-            })}
-          </div>
+          ${renderDraftParticipantFields("schedule")}
           <label class="field mobile-datetime-field">
             <span>Date and time</span>
             <input
@@ -4634,16 +4752,12 @@
       `;
     }
 
-    const aWinner = debate.status === "resolved" && debate.result === "a";
-    const bWinner = debate.status === "resolved" && debate.result === "b";
-    const aLoser = debate.status === "resolved" && debate.result === "b";
-    const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
     const loserName = debate.status === "resolved"
       ? debate.result === "a"
-        ? formatDisplayName(debate.debaterBName || "debater", "Debater")
+        ? getDebateTeamLabel(debate, "b", "Team B")
         : debate.result === "b"
-          ? formatDisplayName(debate.debaterAName || "debater", "Debater")
+          ? getDebateTeamLabel(debate, "a", "Team A")
           : ""
       : "";
     const isAwaitingReview = isDebateAwaitingReview(debate);
@@ -4673,11 +4787,7 @@
             ${renderDebateEditButton(debate)}
           </div>
 
-          <div class="people-row">
-            ${renderPersonBadge(debate.debaterAName, debate.debaterAUid, { isWinner: aWinner, isLoser: aLoser })}
-            <span class="mini-tag">vs</span>
-            ${renderPersonBadge(debate.debaterBName, debate.debaterBUid, { isWinner: bWinner, isLoser: bLoser })}
-          </div>
+          ${renderDebatePeopleRow(debate)}
 
           <div class="detail-grid debate-detail-grid">
             <div class="detail-row">
@@ -4693,14 +4803,14 @@
               <strong>${
                 isAwaitingReview || debate.result === "draw"
                   ? escapeHtml(resultDetailValue)
-                  : renderInlineProfileIdentity(resultDetailValue, debate.result === "a" ? debate.debaterAUid : debate.debaterBUid)
+                  : renderTeamIdentityInline(debate, debate.result)
               }</strong>
             </div>
             <div class="detail-row${loserToneClass}">
               <span class="detail-label">Loser</span>
               <strong>${
                 loserName
-                  ? renderInlineProfileIdentity(loserName, debate.result === "a" ? debate.debaterBUid : debate.debaterAUid)
+                  ? renderTeamIdentityInline(debate, debate.result === "a" ? "b" : "a")
                   : "N/A"
               }</strong>
             </div>
@@ -4816,20 +4926,7 @@
               />
             </label>
           </div>
-          <div class="field-row">
-            ${renderDebaterSelect({
-              label: "Debater A",
-              field: "debaterAUid",
-              selectedUid: state.scheduleDraft.debaterAUid,
-              otherUid: state.scheduleDraft.debaterBUid
-            })}
-            ${renderDebaterSelect({
-              label: "Debater B",
-              field: "debaterBUid",
-              selectedUid: state.scheduleDraft.debaterBUid,
-              otherUid: state.scheduleDraft.debaterAUid
-            })}
-          </div>
+          ${renderDraftParticipantFields("schedule")}
           <label class="field">
             <span>Moderator</span>
             <input
@@ -5210,20 +5307,28 @@
         ${renderScrollablePanel(
           `
             <div class="mini-list">
-              <div class="mini-row">
-                <div class="mini-row-copy">${renderProfileLink(debate.debaterAName, debate.debaterAUid, "profile-link-strong", {
-                  showAvatar: true,
-                  avatarClassName: "profile-avatar"
-                })}</div>
-                <span class="mini-tag">A</span>
-              </div>
-              <div class="mini-row">
-                <div class="mini-row-copy">${renderProfileLink(debate.debaterBName, debate.debaterBUid, "profile-link-strong", {
-                  showAvatar: true,
-                  avatarClassName: "profile-avatar"
-                })}</div>
-                <span class="mini-tag">B</span>
-              </div>
+              ${getDebateTeamParticipants(debate, "a").map((entry, index) => {
+                return `
+                  <div class="mini-row">
+                    <div class="mini-row-copy">${renderProfileLink(entry.name, entry.uid, "profile-link-strong", {
+                      showAvatar: true,
+                      avatarClassName: "profile-avatar"
+                    })}</div>
+                    <span class="mini-tag">${escapeHtml(index === 0 ? "A" : "A2")}</span>
+                  </div>
+                `;
+              }).join("")}
+              ${getDebateTeamParticipants(debate, "b").map((entry, index) => {
+                return `
+                  <div class="mini-row">
+                    <div class="mini-row-copy">${renderProfileLink(entry.name, entry.uid, "profile-link-strong", {
+                      showAvatar: true,
+                      avatarClassName: "profile-avatar"
+                    })}</div>
+                    <span class="mini-tag">${escapeHtml(index === 0 ? "B" : "B2")}</span>
+                  </div>
+                `;
+              }).join("")}
               <div class="mini-row">
                 <div><strong>${escapeHtml(formatDisplayName(debate.moderator || "No moderator", "No Moderator"))}</strong></div>
                 <span class="mini-tag">Mod</span>
@@ -5435,10 +5540,6 @@
   function renderDebateCard(debate, options = {}) {
     const busyPrefix = `${debate.id}:`;
     const isBusy = state.actionBusyKey.startsWith(busyPrefix);
-    const aWinner = debate.status === "resolved" && debate.result === "a";
-    const bWinner = debate.status === "resolved" && debate.result === "b";
-    const aLoser = debate.status === "resolved" && debate.result === "b";
-    const bLoser = debate.status === "resolved" && debate.result === "a";
     const winnerName = getDebateWinnerName(debate);
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
@@ -5474,11 +5575,7 @@
           </div>
         </div>
 
-        <div class="people-row">
-          ${renderPersonBadge(debate.debaterAName, debate.debaterAUid, { isWinner: aWinner, isLoser: aLoser })}
-          <span class="mini-tag">vs</span>
-          ${renderPersonBadge(debate.debaterBName, debate.debaterBUid, { isWinner: bWinner, isLoser: bLoser })}
-        </div>
+        ${renderDebatePeopleRow(debate)}
 
         <div class="detail-grid">
           <div class="detail-row">
@@ -5490,7 +5587,7 @@
             <strong>${
               isAwaitingReview || debate.result === "draw"
                 ? escapeHtml(resultDetailValue)
-                : renderInlineProfileIdentity(resultDetailValue, debate.result === "a" ? debate.debaterAUid : debate.debaterBUid)
+                : renderTeamIdentityInline(debate, debate.result)
             }</strong>
           </div>
         </div>
@@ -5536,7 +5633,7 @@
                           data-outcome="a"
                           ${isBusy ? "disabled" : ""}
                         >
-                          ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))} wins
+                          ${escapeHtml(getDebateTeamLabel(debate, "a", "Team A"))} wins
                         </button>
                         <button
                           class="result-btn win"
@@ -5546,7 +5643,7 @@
                           data-outcome="b"
                           ${isBusy ? "disabled" : ""}
                         >
-                          ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))} wins
+                          ${escapeHtml(getDebateTeamLabel(debate, "b", "Team B"))} wins
                         </button>
                         <button
                           class="result-btn draw"
@@ -5691,6 +5788,58 @@
     return `<span class="${classes.join(" ")}">${renderInlineProfileIdentity(name, uid)}</span>`;
   }
 
+  function renderTeamIdentityInline(debate, teamId, options = {}) {
+    const entries = getDebateTeamParticipants(debate, teamId);
+    const fallback = options.fallback || (String(teamId || "").trim().toLowerCase() === "b" ? "Team B" : "Team A");
+    if (!entries.length) {
+      return escapeHtml(fallback);
+    }
+    return `
+      <span class="team-inline-identity">
+        ${entries
+          .map((entry) => renderInlineProfileIdentity(entry.name, entry.uid, options))
+          .join('<span class="team-joiner" aria-hidden="true">&amp;</span>')}
+      </span>
+    `;
+  }
+
+  function renderTeamParticipantGroup(debate, teamId, options = {}) {
+    const entries = getDebateTeamParticipants(debate, teamId);
+    const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
+    const badgeRenderer = options.static ? renderStaticPersonBadge : renderPersonBadge;
+    const isWinner = debate?.status === "resolved" && debate?.result === safeTeamId;
+    const isLoser = debate?.status === "resolved" && ["a", "b"].includes(String(debate?.result || "")) && debate?.result !== safeTeamId;
+    const fallbackLabel = safeTeamId === "a" ? "Team A" : "Team B";
+    if (!entries.length) {
+      return `<span class="team-badge-group is-empty">${escapeHtml(fallbackLabel)}</span>`;
+    }
+    return `
+      <span class="team-badge-group${entries.length > 1 ? " is-team" : ""}">
+        ${entries
+          .map((entry) => badgeRenderer(entry.name, entry.uid, { isWinner, isLoser }))
+          .join('<span class="team-joiner" aria-hidden="true">&amp;</span>')}
+      </span>
+    `;
+  }
+
+  function renderDebatePeopleRow(debate, options = {}) {
+    const rowClasses = ["people-row"];
+    if (options.mobile) {
+      rowClasses.push("mobile-row-people");
+    }
+    if (options.className) {
+      rowClasses.push(String(options.className).trim());
+    }
+
+    return `
+      <div class="${rowClasses.join(" ")}">
+        ${renderTeamParticipantGroup(debate, "a", options)}
+        <span class="mini-tag">vs</span>
+        ${renderTeamParticipantGroup(debate, "b", options)}
+      </div>
+    `;
+  }
+
   function getDraftFormSelector(owner = "schedule") {
     return owner === "lazy" ? "#lazy-debate-form" : "#schedule-form";
   }
@@ -5699,8 +5848,23 @@
     return el.mainContent?.querySelector(getDraftFormSelector(owner)) || null;
   }
 
+  function getDraftTeamLabel(owner, teamId, fallback = "") {
+    const draft = getDraftState(owner);
+    const teamSize = getDraftTeamSize(owner);
+    if (!draft) {
+      return fallback || (String(teamId || "").trim().toLowerCase() === "b" ? "Team B" : "Team A");
+    }
+
+    const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
+    const labels = getDraftTeamParticipantFields(safeTeamId, teamSize)
+      .map((field) => getDraftDebaterQueryValue(owner, field))
+      .map((value) => formatDisplayName(value, ""))
+      .filter(Boolean);
+    return labels.join(" & ") || fallback || (safeTeamId === "b" ? "Team B" : "Team A");
+  }
+
   function getDebaterSelectLabel(field) {
-    return field === "debaterBUid" ? "Debater B" : "Debater A";
+    return getDraftParticipantMeta(field)?.label || "Debater";
   }
 
   function hasPublishedRating(rating) {
@@ -6285,8 +6449,8 @@
   function renderLazyWinnerButtons() {
     const lazyDraft = state.lazyDebateDraft;
     const activeResult = lazyDraft.result === "b" || lazyDraft.result === "draw" ? lazyDraft.result : "a";
-    const debaterALabel = getDraftDebaterLabel("lazy", "debaterAUid", "Debater A");
-    const debaterBLabel = getDraftDebaterLabel("lazy", "debaterBUid", "Debater B");
+    const debaterALabel = getDraftTeamLabel("lazy", "a", "Team A");
+    const debaterBLabel = getDraftTeamLabel("lazy", "b", "Team B");
 
     function renderWinnerButton(value, label, toneClass, activeCopy) {
       const isActive = activeResult === value;
@@ -6354,27 +6518,22 @@
     form.querySelectorAll(`[data-draft-owner="${safeOwner}"][data-draft-field]`).forEach((node) => {
       if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) return;
       const field = String(node.getAttribute("data-draft-field") || "").trim();
-      if (!field || field === "debaterAUid" || field === "debaterBUid" || field === "category") return;
+      if (
+        !field ||
+        field === "category" ||
+        field === "teamSize" ||
+        DEBATE_PARTICIPANT_FIELD_META.some((entry) => entry.field === field)
+      ) return;
       const nextValue = String(draft[field] ?? "");
       if (node.value !== nextValue) {
         node.value = nextValue;
       }
     });
 
-    ["debaterAUid", "debaterBUid"].forEach((field) => {
-      const selectKey = getDebaterSelectKey(safeOwner, field);
-      const root = form.querySelector(`[data-select-root="${selectKey}"]`);
-      const wrapper = root?.closest("label.field");
-      if (!wrapper) return;
-      const otherField = field === "debaterAUid" ? "debaterBUid" : "debaterAUid";
-      wrapper.outerHTML = renderDebaterSelect({
-        label: getDebaterSelectLabel(field),
-        field,
-        selectedUid: draft[field],
-        otherUid: draft[otherField],
-        owner: safeOwner
-      });
-    });
+    const participantShell = form.querySelector(`[data-draft-participants-owner="${safeOwner}"]`);
+    if (participantShell) {
+      participantShell.outerHTML = renderDraftParticipantFields(safeOwner);
+    }
 
     syncCategorySelectUi(safeOwner);
 
@@ -6391,8 +6550,9 @@
     }
     if (debate.status !== "resolved") return "Pending";
     if (debate.result === "draw") return "Draw";
-    if (debate.result === "a") return `Winner: ${formatDisplayName(debate.debaterAName || "debater", "Debater")}`;
-    if (debate.result === "b") return `Winner: ${formatDisplayName(debate.debaterBName || "debater", "Debater")}`;
+    if (debate.result === "a" || debate.result === "b") {
+      return `Winner: ${getDebateResultTeamLabel(debate, debate.result, "Winner")}`;
+    }
     return "Resolved";
   }
 
@@ -6400,10 +6560,10 @@
     if (!debate) return "Pending";
     if (debate.result === "draw") return "Draw";
     if (debate.result === "a") {
-      return formatDisplayName(debate.winnerName || debate.debaterAName || "debater", "Debater");
+      return getDebateResultTeamLabel(debate, "a", "Team A");
     }
     if (debate.result === "b") {
-      return formatDisplayName(debate.winnerName || debate.debaterBName || "debater", "Debater");
+      return getDebateResultTeamLabel(debate, "b", "Team B");
     }
     return "Pending";
   }
@@ -6527,7 +6687,7 @@
             data-outcome="a"
             ${isBusy ? "disabled" : ""}
           >
-            ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))}
+            ${escapeHtml(getDebateTeamLabel(debate, "a", "Team A"))}
           </button>
           <button
             class="result-btn win"
@@ -6537,7 +6697,7 @@
             data-outcome="b"
             ${isBusy ? "disabled" : ""}
           >
-            ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))}
+            ${escapeHtml(getDebateTeamLabel(debate, "b", "Team B"))}
           </button>
           <button
             class="result-btn draw"
@@ -6563,7 +6723,7 @@
             data-outcome="a"
             ${isBusy ? "disabled" : ""}
           >
-            ${escapeHtml(formatDisplayName(debate.debaterAName || "A", "Debater A"))}
+            ${escapeHtml(getDebateTeamLabel(debate, "a", "Team A"))}
           </button>
           <button
             class="result-btn win"
@@ -6573,7 +6733,7 @@
             data-outcome="b"
             ${isBusy ? "disabled" : ""}
           >
-            ${escapeHtml(formatDisplayName(debate.debaterBName || "B", "Debater B"))}
+            ${escapeHtml(getDebateTeamLabel(debate, "b", "Team B"))}
           </button>
           <button
             class="result-btn draw"
@@ -6617,11 +6777,11 @@
     }
 
     if (debate.result === "a") {
-      return formatDisplayName(debate.winnerName || debate.debaterAName || "", "Debater");
+      return getDebateResultTeamLabel(debate, "a", "Team A");
     }
 
     if (debate.result === "b") {
-      return formatDisplayName(debate.winnerName || debate.debaterBName || "", "Debater");
+      return getDebateResultTeamLabel(debate, "b", "Team B");
     }
 
     return formatDisplayName(debate.winnerName || "", "");
@@ -6775,7 +6935,7 @@
       }
     });
 
-    const canCreate = Boolean(filterValue) && isValidUsername(filterValue) && !exactMatch;
+    const canCreate = Boolean(filterValue) && isValidUsername(filterValue) && !exactMatch && !directoryHasNormalizedUsername(filterValue);
     if (createButton) {
       createButton.classList.toggle("hidden", !canCreate);
       createButton.setAttribute("data-value", canCreate ? filterValue : "");
@@ -6789,12 +6949,16 @@
     }
   }
 
-  function renderDebaterSelect({ label, field, selectedUid, otherUid, owner = "schedule" }) {
+  function renderDebaterSelect({ label, field, selectedUid, otherUid, blockedUids, owner = "schedule" }) {
     const safeField = String(field || "").trim();
     const safeOwner = owner === "lazy" ? "lazy" : "schedule";
     const selectKey = getDebaterSelectKey(safeOwner, safeField);
     const selected = String(selectedUid || "").trim();
-    const blocked = String(otherUid || "").trim();
+    const blockedSet = new Set(
+      (Array.isArray(blockedUids) ? blockedUids : [otherUid])
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean)
+    );
     const isOpen = state.openSelectKey === selectKey;
     const inputValue = getDraftDebaterQueryValue(safeOwner, safeField);
     const options = [
@@ -6807,7 +6971,7 @@
 
     state.directory.forEach((entry) => {
       const uid = String(entry.uid || "").trim();
-      if (!uid || uid === blocked) return;
+      if (!uid || blockedSet.has(uid)) return;
       const isSelected = uid === selected;
       options.push(`
         <button
@@ -7498,14 +7662,12 @@
 
     const patch = {};
 
-    if (String(debate.debaterAUid || "").trim() === placeholderUid) {
-      patch.debaterAUid = safeUid;
-      patch.debaterAName = safeName;
-    }
-    if (String(debate.debaterBUid || "").trim() === placeholderUid) {
-      patch.debaterBUid = safeUid;
-      patch.debaterBName = safeName;
-    }
+    DEBATE_PARTICIPANT_FIELD_META.forEach((entry) => {
+      if (String(debate[entry.field] || "").trim() === placeholderUid) {
+        patch[entry.field] = safeUid;
+        patch[entry.nameField] = safeName;
+      }
+    });
     if (String(debate.winnerUid || "").trim() === placeholderUid) {
       patch.winnerUid = safeUid;
       patch.winnerName = safeName;
@@ -7522,12 +7684,11 @@
     ["scheduleDraft", "lazyDebateDraft"].forEach((draftKey) => {
       const draft = state[draftKey];
       if (!draft || typeof draft !== "object") return;
-      if (String(draft.debaterAUid || "").trim() === safePreviousUid) {
-        draft.debaterAUid = safeNextUid;
-      }
-      if (String(draft.debaterBUid || "").trim() === safePreviousUid) {
-        draft.debaterBUid = safeNextUid;
-      }
+      DEBATE_PARTICIPANT_FIELD_META.forEach((entry) => {
+        if (String(draft[entry.field] || "").trim() === safePreviousUid) {
+          draft[entry.field] = safeNextUid;
+        }
+      });
     });
   }
 
@@ -7539,14 +7700,12 @@
 
     const patch = {};
 
-    if (String(debate.debaterAUid || "").trim() === safePreviousUid) {
-      patch.debaterAUid = nextPlaceholderUid;
-      patch.debaterAName = safeName;
-    }
-    if (String(debate.debaterBUid || "").trim() === safePreviousUid) {
-      patch.debaterBUid = nextPlaceholderUid;
-      patch.debaterBName = safeName;
-    }
+    DEBATE_PARTICIPANT_FIELD_META.forEach((entry) => {
+      if (String(debate[entry.field] || "").trim() === safePreviousUid) {
+        patch[entry.field] = nextPlaceholderUid;
+        patch[entry.nameField] = safeName;
+      }
+    });
     if (String(debate.winnerUid || "").trim() === safePreviousUid) {
       patch.winnerUid = nextPlaceholderUid;
       patch.winnerName = safeName;
@@ -7724,12 +7883,14 @@
 
     const patch = {};
 
-    if (String(debate.debaterAUid || "").trim() === safeUid && normalizeUsername(debate.debaterAName || "") !== safeName) {
-      patch.debaterAName = safeName;
-    }
-    if (String(debate.debaterBUid || "").trim() === safeUid && normalizeUsername(debate.debaterBName || "") !== safeName) {
-      patch.debaterBName = safeName;
-    }
+    DEBATE_PARTICIPANT_FIELD_META.forEach((entry) => {
+      if (
+        String(debate[entry.field] || "").trim() === safeUid &&
+        normalizeUsername(debate[entry.nameField] || "") !== safeName
+      ) {
+        patch[entry.nameField] = safeName;
+      }
+    });
     if (String(debate.winnerUid || "").trim() === safeUid && normalizeUsername(debate.winnerName || "") !== safeName) {
       patch.winnerName = safeName;
     }
@@ -8265,14 +8426,75 @@
     }
   }
 
+  function getDraftParticipantSelectionEntries(owner = "schedule") {
+    const safeOwner = owner === "lazy" ? "lazy" : "schedule";
+    const draft = getDraftState(safeOwner);
+    const teamSize = getDraftTeamSize(safeOwner);
+    if (!draft) return [];
+    return getActiveDraftParticipantFields(teamSize).map((field) => {
+      const meta = getDraftParticipantMeta(field);
+      return {
+        ...meta,
+        field,
+        selection: getDraftDebaterSelectionValue(safeOwner, field)
+      };
+    });
+  }
+
+  async function resolveDraftParticipantIdentities(owner = "schedule") {
+    const selectionEntries = getDraftParticipantSelectionEntries(owner);
+    const resolvedEntries = await Promise.all(
+      selectionEntries.map(async (entry) => {
+        const identity = entry.selection ? await resolveScheduledDebaterIdentity(entry.selection) : null;
+        const uid = String(identity?.uid || "").trim();
+        const name = normalizeUsername(identity?.username || "debater") || "debater";
+        return {
+          ...entry,
+          uid,
+          name
+        };
+      })
+    );
+    return {
+      teamSize: getDraftTeamSize(owner),
+      participants: resolvedEntries,
+      teamA: resolvedEntries.filter((entry) => entry.team === "a"),
+      teamB: resolvedEntries.filter((entry) => entry.team === "b")
+    };
+  }
+
+  function buildDebateParticipantPatch(participants) {
+    const patch = {};
+    (Array.isArray(participants) ? participants : []).forEach((entry) => {
+      if (!entry?.field || !entry?.nameField) return;
+      patch[entry.field] = String(entry.uid || "").trim();
+      patch[entry.nameField] = normalizeUsername(entry.name || "debater") || "debater";
+    });
+    return patch;
+  }
+
+  function buildResolvedWinnerMeta(teamSize, result, teamAEntries, teamBEntries) {
+    if (result !== "a" && result !== "b") {
+      return { winnerUid: "", winnerName: "" };
+    }
+    if (normalizeDebateTeamSize(teamSize, 1) === 2) {
+      return { winnerUid: "", winnerName: "" };
+    }
+    const winnerEntry = result === "a" ? teamAEntries?.[0] : teamBEntries?.[0];
+    return {
+      winnerUid: String(winnerEntry?.uid || "").trim(),
+      winnerName: normalizeUsername(winnerEntry?.name || "") || ""
+    };
+  }
+
   async function handleScheduleSubmit(event) {
     event.preventDefault();
     if (!state.user || state.scheduleSaving) return;
 
     const formData = new FormData(event.target);
     const topic = String(formData.get("topic") || "").trim();
-    const debaterASelection = getDraftDebaterSelectionValue("schedule", "debaterAUid");
-    const debaterBUSelection = getDraftDebaterSelectionValue("schedule", "debaterBUid");
+    const teamSize = getDraftTeamSize("schedule");
+    const participantSelections = getDraftParticipantSelectionEntries("schedule");
     const category = normalizeDebateCategory(formData.get("category"), "");
     const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
     const moderator = String(formData.get("moderator") || "").trim();
@@ -8282,12 +8504,12 @@
       showToast("Add a topic or resolution before scheduling.", "error");
       return;
     }
-    if (!debaterASelection || !debaterBUSelection) {
-      showToast("Pick both debaters before scheduling.", "error");
+    if (participantSelections.some((entry) => !entry.selection)) {
+      showToast(teamSize === 2 ? "Pick all four debaters before scheduling." : "Pick both debaters before scheduling.", "error");
       return;
     }
-    if (debaterASelection === debaterBUSelection) {
-      showToast("Debaters need to be different people.", "error");
+    if (new Set(participantSelections.map((entry) => entry.selection)).size !== participantSelections.length) {
+      showToast("Each debater slot needs a different person.", "error");
       return;
     }
     if (!isValidDebateCategory(category)) {
@@ -8306,22 +8528,15 @@
     renderApp();
 
     try {
-      const debaterAIdentity = await resolveScheduledDebaterIdentity(debaterASelection);
-      const debaterBIdentity = await resolveScheduledDebaterIdentity(debaterBUSelection);
-      if (!debaterAIdentity || !debaterBIdentity) {
+      const resolvedParticipants = await resolveDraftParticipantIdentities("schedule");
+      const participantPatch = buildDebateParticipantPatch(resolvedParticipants.participants);
+      const participantUids = resolvedParticipants.participants.map((entry) => entry.uid).filter(Boolean);
+
+      if (participantUids.length !== participantSelections.length) {
         throw new Error("INVALID_DEBATERS");
       }
-
-      const debaterAUid = String(debaterAIdentity.uid || "").trim();
-      const debaterBUid = String(debaterBIdentity.uid || "").trim();
-      const debaterAName = normalizeUsername(debaterAIdentity.username || "debater") || "debater";
-      const debaterBName = normalizeUsername(debaterBIdentity.username || "debater") || "debater";
-
-      if (!debaterAUid || !debaterBUid) {
-        throw new Error("INVALID_DEBATERS");
-      }
-      if (debaterAUid === debaterBUid) {
-        showToast("Debaters need to be different people.", "error");
+      if (new Set(participantUids).size !== participantUids.length) {
+        showToast("Each debater slot needs a different person.", "error");
         return;
       }
 
@@ -8332,10 +8547,8 @@
             id: `preview-${Date.now().toString(36)}`,
             topic,
             category,
-            debaterAUid,
-            debaterAName,
-            debaterBUid,
-            debaterBName,
+            teamSize,
+            ...participantPatch,
             scheduledFor: scheduledDate,
             moderator,
             description,
@@ -8363,10 +8576,8 @@
       await db.collection("debates").add({
         topic,
         category,
-        debaterAUid,
-        debaterAName,
-        debaterBUid,
-        debaterBName,
+        teamSize,
+        ...participantPatch,
         scheduledFor: firebase.firestore.Timestamp.fromDate(scheduledDate),
         moderator,
         description,
@@ -8406,8 +8617,8 @@
     const formData = new FormData(event.target);
     const submittedByAdmin = currentIsAdmin();
     const topic = String(formData.get("topic") || "").trim();
-    const debaterASelection = getDraftDebaterSelectionValue("lazy", "debaterAUid");
-    const debaterBUSelection = getDraftDebaterSelectionValue("lazy", "debaterBUid");
+    const teamSize = getDraftTeamSize("lazy");
+    const participantSelections = getDraftParticipantSelectionEntries("lazy");
     const category = normalizeDebateCategory(formData.get("category"), "");
     const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
     const moderator = String(formData.get("moderator") || "").trim();
@@ -8422,12 +8633,12 @@
       showToast("Add a topic or resolution before logging.", "error");
       return;
     }
-    if (!debaterASelection || !debaterBUSelection) {
-      showToast("Pick both debaters before logging.", "error");
+    if (participantSelections.some((entry) => !entry.selection)) {
+      showToast(teamSize === 2 ? "Pick all four debaters before logging." : "Pick both debaters before logging.", "error");
       return;
     }
-    if (debaterASelection === debaterBUSelection) {
-      showToast("Debaters need to be different people.", "error");
+    if (new Set(participantSelections.map((entry) => entry.selection)).size !== participantSelections.length) {
+      showToast("Each debater slot needs a different person.", "error");
       return;
     }
     if (!isValidDebateCategory(category)) {
@@ -8450,16 +8661,12 @@
     renderApp({ preserveScroll: true });
 
     try {
-      const debaterAIdentity = await resolveScheduledDebaterIdentity(debaterASelection);
-      const debaterBIdentity = await resolveScheduledDebaterIdentity(debaterBUSelection);
-      if (!debaterAIdentity || !debaterBIdentity) {
+      const resolvedParticipants = await resolveDraftParticipantIdentities("lazy");
+      const participantPatch = buildDebateParticipantPatch(resolvedParticipants.participants);
+      const participantUids = resolvedParticipants.participants.map((entry) => entry.uid).filter(Boolean);
+      if (participantUids.length !== participantSelections.length) {
         throw new Error("INVALID_DEBATERS");
       }
-
-      const debaterAUid = String(debaterAIdentity.uid || "").trim();
-      const debaterBUid = String(debaterBIdentity.uid || "").trim();
-      const debaterAName = normalizeUsername(debaterAIdentity.username || "debater") || "debater";
-      const debaterBName = normalizeUsername(debaterBIdentity.username || "debater") || "debater";
       const now = new Date();
       const actorName = state.username || (submittedByAdmin ? "admin" : "member");
       const videoPayload = buildDebateVideoPayload(videoUrl, {
@@ -8471,16 +8678,21 @@
         addedByName: actorName
       });
 
-      if (!debaterAUid || !debaterBUid || debaterAUid === debaterBUid) {
-        throw new Error("INVALID_DEBATERS");
+      if (new Set(participantUids).size !== participantUids.length) {
+        showToast("Each debater slot needs a different person.", "error");
+        return;
       }
       if (!videoPayload) {
         showToast("Use a valid YouTube link and clip range.", "error");
         return;
       }
 
-      const winnerUid = result === "a" ? debaterAUid : result === "b" ? debaterBUid : "";
-      const winnerName = result === "a" ? debaterAName : result === "b" ? debaterBName : "";
+      const { winnerUid, winnerName } = buildResolvedWinnerMeta(
+        teamSize,
+        result,
+        resolvedParticipants.teamA,
+        resolvedParticipants.teamB
+      );
       const reviewStatus = submittedByAdmin ? "resolved" : "awaiting_review";
 
       if (isPreviewMode()) {
@@ -8490,10 +8702,8 @@
             id: `preview-${Date.now().toString(36)}`,
             topic,
             category,
-            debaterAUid,
-            debaterAName,
-            debaterBUid,
-            debaterBName,
+            teamSize,
+            ...participantPatch,
             scheduledFor: scheduledDate,
             moderator,
             description,
@@ -8522,10 +8732,8 @@
       await db.collection("debates").add({
         topic,
         category,
-        debaterAUid,
-        debaterAName,
-        debaterBUid,
-        debaterBName,
+        teamSize,
+        ...participantPatch,
         scheduledFor: firebase.firestore.Timestamp.fromDate(scheduledDate),
         moderator,
         description,
@@ -8793,14 +9001,12 @@
         return;
       }
 
-      const winnerUid =
-        debate.result === "a" ? String(debate.debaterAUid || "").trim() : debate.result === "b" ? String(debate.debaterBUid || "").trim() : "";
-      const winnerName =
-        debate.result === "a"
-          ? normalizeUsername(debate.debaterAName || "debater") || "debater"
-          : debate.result === "b"
-            ? normalizeUsername(debate.debaterBName || "debater") || "debater"
-            : "";
+      const { winnerUid, winnerName } = buildResolvedWinnerMeta(
+        getDebateTeamSize(debate, 1),
+        debate.result,
+        getDebateTeamParticipants(debate, "a"),
+        getDebateTeamParticipants(debate, "b")
+      );
 
       if (isPreviewMode()) {
         state.debates = state.debates.map((entry) => {
@@ -8891,10 +9097,16 @@
         payload.claimedByName = state.username || "admin";
         payload.claimedAt = firebase.firestore.FieldValue.serverTimestamp();
       } else if (outcome === "a" || outcome === "b") {
+        const { winnerUid, winnerName } = buildResolvedWinnerMeta(
+          getDebateTeamSize(debate, 1),
+          outcome,
+          getDebateTeamParticipants(debate, "a"),
+          getDebateTeamParticipants(debate, "b")
+        );
         payload.status = "resolved";
         payload.result = outcome;
-        payload.winnerUid = outcome === "a" ? debate.debaterAUid || "" : debate.debaterBUid || "";
-        payload.winnerName = outcome === "a" ? debate.debaterAName || "" : debate.debaterBName || "";
+        payload.winnerUid = winnerUid;
+        payload.winnerName = winnerName;
         payload.claimedByUid = String(state.user.uid || "").trim();
         payload.claimedByName = state.username || "admin";
         payload.claimedAt = firebase.firestore.FieldValue.serverTimestamp();
@@ -9209,6 +9421,17 @@
     if (action === "set-schedule-section") {
       event.preventDefault();
       setScheduleSection(actionButton.getAttribute("data-value"));
+      return;
+    }
+
+    if (action === "set-draft-team-size") {
+      event.preventDefault();
+      const owner = String(actionButton.getAttribute("data-draft-owner") || "schedule").trim();
+      setDraftField(owner, "teamSize", actionButton.getAttribute("data-value"));
+      state.openSelectKey = "";
+      if (!syncDraftFormUi(owner)) {
+        renderApp({ preserveScroll: true });
+      }
       return;
     }
 

@@ -53,6 +53,49 @@ service cloud.firestore {
         );
     }
 
+    function validDebateCategory() {
+      return request.resource.data.category == 'philosophy'
+        || request.resource.data.category == 'politics'
+        || request.resource.data.category == 'misc';
+    }
+
+    function validDebateTeamSize() {
+      return request.resource.data.teamSize == 1 || request.resource.data.teamSize == 2;
+    }
+
+    function validDebateParticipants() {
+      return validDebateTeamSize()
+        && request.resource.data.debaterAUid is string
+        && request.resource.data.debaterBUid is string
+        && request.resource.data.debaterAUid != ''
+        && request.resource.data.debaterBUid != ''
+        && request.resource.data.debaterAUid != request.resource.data.debaterBUid
+        && (
+          (
+            request.resource.data.teamSize == 1
+            && (
+              !request.resource.data.keys().hasAny(['debaterA2Uid'])
+              || request.resource.data.debaterA2Uid == ''
+            )
+            && (
+              !request.resource.data.keys().hasAny(['debaterB2Uid'])
+              || request.resource.data.debaterB2Uid == ''
+            )
+          ) || (
+            request.resource.data.teamSize == 2
+            && request.resource.data.debaterA2Uid is string
+            && request.resource.data.debaterB2Uid is string
+            && request.resource.data.debaterA2Uid != ''
+            && request.resource.data.debaterB2Uid != ''
+            && request.resource.data.debaterAUid != request.resource.data.debaterA2Uid
+            && request.resource.data.debaterAUid != request.resource.data.debaterB2Uid
+            && request.resource.data.debaterBUid != request.resource.data.debaterA2Uid
+            && request.resource.data.debaterBUid != request.resource.data.debaterB2Uid
+            && request.resource.data.debaterA2Uid != request.resource.data.debaterB2Uid
+          )
+        );
+    }
+
     match /usernames/{username} {
       allow read: if true;
       allow create: if username.matches('^[a-z0-9_]{3,20}$')
@@ -264,16 +307,10 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn()
         && request.resource.data.createdByUid == request.auth.uid
-        && request.resource.data.debaterAUid is string
-        && request.resource.data.debaterBUid is string
-        && request.resource.data.debaterAUid != request.resource.data.debaterBUid
+        && validDebateParticipants()
         && request.resource.data.topic is string
         && request.resource.data.category is string
-        && (
-          request.resource.data.category == 'philosophy'
-          || request.resource.data.category == 'politics'
-          || request.resource.data.category == 'misc'
-        )
+        && validDebateCategory()
         && (
           (
             request.resource.data.status == 'scheduled'
