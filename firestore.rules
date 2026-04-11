@@ -101,6 +101,164 @@ service cloud.firestore {
       allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
+    match /players/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn() && (
+        request.auth.uid == uid
+        || isAdmin()
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invites', 'updatedAt'])
+      );
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    match /teams/{teamId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.creatorUserId == request.auth.uid;
+
+      function uidListed(listValue) {
+        return (listValue is list) && listValue.hasAny([request.auth.uid]);
+      }
+
+      function rosterEntryHasAuthUid(roster, i) {
+        return roster.size() > i
+          && roster[i] is map
+          && roster[i].get('userId', '') == request.auth.uid;
+      }
+
+      function rosterHasAuthUid(roster) {
+        return (roster is list) && (
+          rosterEntryHasAuthUid(roster, 0)  || rosterEntryHasAuthUid(roster, 1)
+          || rosterEntryHasAuthUid(roster, 2)  || rosterEntryHasAuthUid(roster, 3)
+          || rosterEntryHasAuthUid(roster, 4)  || rosterEntryHasAuthUid(roster, 5)
+          || rosterEntryHasAuthUid(roster, 6)  || rosterEntryHasAuthUid(roster, 7)
+          || rosterEntryHasAuthUid(roster, 8)  || rosterEntryHasAuthUid(roster, 9)
+          || rosterEntryHasAuthUid(roster, 10) || rosterEntryHasAuthUid(roster, 11)
+          || rosterEntryHasAuthUid(roster, 12) || rosterEntryHasAuthUid(roster, 13)
+          || rosterEntryHasAuthUid(roster, 14) || rosterEntryHasAuthUid(roster, 15)
+        );
+      }
+
+      function isTeamMember(teamData) {
+        return signedIn() && (
+          teamData.get('creatorUserId', '') == request.auth.uid
+          || uidListed(teamData.get('memberIds', []))
+          || rosterHasAuthUid(teamData.get('members', []))
+        );
+      }
+
+      function isSelfPendingOnlyUpdate() {
+        return signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pending', 'updatedAt'])
+          && (
+            uidListed(resource.data.get('pendingIds', []))
+            || uidListed(request.resource.data.get('pendingIds', []))
+            || rosterHasAuthUid(resource.data.get('pending', []))
+            || rosterHasAuthUid(request.resource.data.get('pending', []))
+          );
+      }
+
+      function isSelfJoinUpdate() {
+        return signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'pending', 'updatedAt'])
+          && (
+            uidListed(request.resource.data.get('memberIds', []))
+            || rosterHasAuthUid(request.resource.data.get('members', []))
+          );
+      }
+
+      allow update: if signedIn() && (
+        isAdmin()
+        || isTeamMember(resource.data)
+        || isSelfPendingOnlyUpdate()
+        || isSelfJoinUpdate()
+      );
+      allow delete: if isAdmin();
+
+      match /chat/{msgId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /teamNames/{nameKey} {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+
+    match /globalChat/{msgId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /games/{gameId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+
+      match /{chatCollection}/{msgId} {
+        allow read: if signedIn()
+          && (chatCollection == 'redChat' || chatCollection == 'blueChat');
+        allow create: if signedIn()
+          && (chatCollection == 'redChat' || chatCollection == 'blueChat')
+          && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isAdmin()
+          && (chatCollection == 'redChat' || chatCollection == 'blueChat');
+      }
+    }
+
+    match /presence/{uid} {
+      allow read: if true;
+      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    match /challenges/{challengeId} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn();
+    }
+
+    match /dmThreads/{threadId} {
+      allow read: if signedIn() && (request.auth.uid in resource.data.participants);
+      allow create: if signedIn()
+        && (request.auth.uid in request.resource.data.participants)
+        && request.resource.data.participants.size() == 2;
+      allow update: if signedIn() && (request.auth.uid in resource.data.participants);
+      allow delete: if isAdmin() || (signedIn() && (request.auth.uid in resource.data.participants));
+
+      match /messages/{msgId} {
+        allow read: if signedIn()
+          && exists(/databases/$(database)/documents/dmThreads/$(threadId))
+          && (request.auth.uid in get(/databases/$(database)/documents/dmThreads/$(threadId)).data.participants);
+        allow create: if signedIn()
+          && exists(/databases/$(database)/documents/dmThreads/$(threadId))
+          && (request.auth.uid in get(/databases/$(database)/documents/dmThreads/$(threadId)).data.participants)
+          && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && request.resource.data.actorId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /adminBackups/{backupId} {
+      allow read, write: if isAdmin();
+      match /{sub=**} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    match /config/{configId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
     match /debates/{debateId} {
       allow read: if signedIn();
       allow create: if signedIn()
@@ -140,12 +298,79 @@ service cloud.firestore {
           )
         );
       allow update: if isAdmin();
-      allow delete: if isAdmin() || (signedIn()
+      allow delete: if isAdmin() || (
+        signedIn()
         && resource.data.createdByUid == request.auth.uid
         && (
           resource.data.status == 'scheduled'
           || resource.data.status == 'awaiting_review'
-        ));
+        )
+      );
+    }
+
+    match /libraryBooks/{bookId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerName is string
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.author is string
+        && request.resource.data.description is string
+        && request.resource.data.pdfPath is string
+        && request.resource.data.pdfUrl is string;
+
+      allow update: if signedIn()
+        && (
+          isAdmin()
+          || (
+            resource.data.ownerUid == request.auth.uid
+            && request.resource.data.ownerUid == resource.data.ownerUid
+          )
+        );
+
+      allow delete: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+    }
+
+    match /libraryFollows/{followId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.followerUid == request.auth.uid
+        && request.resource.data.followerUid is string
+        && request.resource.data.followingUid is string
+        && request.resource.data.followingUid != request.auth.uid;
+
+      allow update: if false;
+
+      allow delete: if isAdmin() || (signedIn() && resource.data.followerUid == request.auth.uid);
+    }
+
+    match /libraryComments/{commentId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.authorUid is string
+        && request.resource.data.bookId is string
+        && request.resource.data.bookTitle is string
+        && request.resource.data.bookAuthor is string
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 600;
+
+      allow update: if false;
+
+      allow delete: if isAdmin() || (signedIn() && resource.data.authorUid == request.auth.uid);
+    }
+
+    match /nameRegistry/{docId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
