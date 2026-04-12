@@ -1859,8 +1859,7 @@
 
   function getRenderedSearchSuggestionNote(suggestion) {
     if (suggestion?.debateId) {
-      const debate = state.debates.find((entry) => String(entry?.id || "").trim() === String(suggestion.debateId || "").trim());
-      return `Open debate page | ${formatShortDate(debate?.scheduledFor || "")}`;
+      return "";
     }
 
     return suggestion?.note || "";

@@ -1303,7 +1303,7 @@ textarea:focus {
 }
 
 .search-suggestion.is-detailed {
-  grid-template-columns: 96px minmax(0, 1fr) auto;
+  grid-template-columns: 96px minmax(0, 1fr);
   align-items: stretch;
   gap: 14px;
   min-height: 92px;
@@ -1399,11 +1399,7 @@ textarea:focus {
 }
 
 .search-suggestion.is-detailed .search-suggestion-note {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 130px;
-  color: var(--text);
+  display: none;
 }
 
 .topbar-meta {
