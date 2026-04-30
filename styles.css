@@ -3455,6 +3455,9 @@ html[data-theme="light"] body:not(.is-mobile-app) .archive-page .detail-row {
 }
 
 body.is-mobile-app {
+  height: var(--mobile-viewport-height);
+  min-height: 0;
+  overflow: hidden;
   overscroll-behavior-y: none;
   --mobile-tab-safe-pad: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.2rem), 0.7rem);
   --mobile-tabbar-height: 58px;
@@ -3478,8 +3481,10 @@ body.is-mobile-app {
 }
 
 .is-mobile-app .hub-shell {
-  min-height: var(--mobile-viewport-height);
-  padding-bottom: calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad));
+  height: var(--mobile-viewport-height);
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
 }
 
 .is-mobile-app .topbar {
@@ -3523,18 +3528,24 @@ body.is-mobile-app {
 
 .is-mobile-app .workspace {
   display: block;
-  min-height: var(--mobile-content-height);
-  padding: 0 12px calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad) + 6px);
+  height: var(--mobile-content-height);
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 12px;
 }
 
 .is-mobile-app .board {
   grid-template-columns: 1fr;
   gap: 0;
+  height: 100%;
+  min-height: 0;
 }
 
 .is-mobile-app .main-content {
   gap: 20px;
-  min-height: var(--mobile-content-height);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .is-mobile-app .sidebar {
@@ -3642,7 +3653,9 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 
 .is-mobile-app .mobile-page {
   gap: 18px;
-  min-height: var(--mobile-content-height);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding-top: 0;
 }
 
@@ -3692,7 +3705,9 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 
 .is-mobile-app .mobile-block {
   display: grid;
+  align-content: start;
   gap: 14px;
+  min-height: 0;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--surface-divider);
 }
@@ -3705,9 +3720,15 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 .is-mobile-app .mobile-scroll-page-block {
   display: flex;
   flex-direction: column;
-  height: var(--mobile-content-height);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+.is-mobile-app .mobile-page > .mobile-block:not(.mobile-scroll-page-block) {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .is-mobile-app .mobile-scroll-page-block > .panel-scroll.mobile-page-scroll {

@@ -3838,6 +3838,9 @@
       });
     } else if (el.mainContent) {
       el.mainContent.style.removeProperty("min-height");
+      window.requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+      });
     }
   }
 
