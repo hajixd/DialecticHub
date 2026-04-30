@@ -1896,6 +1896,10 @@ textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.profile-hero + .section-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .schedule-form-grid {
   align-items: stretch;
 }
@@ -3550,6 +3554,10 @@ body.is-mobile-app {
   text-transform: uppercase;
   white-space: normal;
   box-shadow: none;
+}
+
+.is-mobile-app .desktop-only-nav {
+  display: none;
 }
 
 .is-mobile-app .nav-btn::before {

@@ -35,7 +35,7 @@
   const VIDEO_CLIP_SLIDER_STEP_SECONDS = 15;
   const VIDEO_CLIP_DEFAULT_END_SECONDS = 10 * 60;
   const PLACEHOLDER_UID_PREFIX = "invite:";
-  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
+  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "log", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1100;
   const MIN_RANKED_DEBATES = 3;
   const PLACEMENT_GAME_WEIGHT = 2;
@@ -1204,6 +1204,14 @@
       return;
     }
 
+    if (!currentIsAdmin()) {
+      el.adminNavLink.classList.add("hidden");
+      el.adminNavLink.classList.remove("is-active");
+      el.adminNavLink.setAttribute("aria-disabled", "true");
+      el.adminNavLink.setAttribute("tabindex", "-1");
+      return;
+    }
+
     if (el.adminNavLink.getAttribute("data-page-link") !== "admin") {
       el.adminNavLink.setAttribute("data-page-link", "admin");
     }
@@ -1652,6 +1660,7 @@
     const pages = [
       { page: "dashboard", title: "My Profile", note: "Open your profile" },
       { page: "schedule", title: "Schedule Debate", note: "Open the upcoming board" },
+      { page: "log", title: "Log Debates", note: currentIsAdmin() ? "Log a completed debate" : "Submit a completed debate" },
       { page: "archive", title: "Past Debates", note: "Open the resolved archive" },
       { page: "rankings", title: "Rankings", note: "Open rankings" }
     ];
@@ -3708,8 +3717,18 @@
       return;
     }
 
+    if (mobileViewport && state.currentPage === "log") {
+      setPage("settings", { settingsSection: "lazy", replace: true });
+      return;
+    }
+
     if (!mobileViewport && state.currentPage === "settings") {
       setPage(currentIsAdmin() ? "admin" : "dashboard", { replace: true });
+      return;
+    }
+
+    if (!mobileViewport && state.currentPage === "admin" && !currentIsAdmin()) {
+      setPage("log", { replace: true });
       return;
     }
 
@@ -3791,6 +3810,8 @@
         return renderSearchPage();
       case "schedule":
         return renderSchedulePage(model);
+      case "log":
+        return renderLogDebatesPage();
       case "archive":
         return renderArchivePage(model);
       case "rankings":
@@ -3829,6 +3850,8 @@
         return renderMobileSearchPage();
       case "schedule":
         return renderMobileSchedulePage(model);
+      case "log":
+        return renderMobileTooLazyDebatesPage();
       case "archive":
         return renderMobileArchivePage(model);
       case "rankings":
@@ -5124,6 +5147,29 @@
     `;
   }
 
+  function renderLogDebatesPage() {
+    return `
+      <section class="page-shell log-page">
+        <section class="page-hero">
+          <div>
+            <span class="page-kicker">Debate log</span>
+            <h2 class="page-title">Log Debates</h2>
+          </div>
+        </section>
+
+        <section class="section-panel">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">Log Debates</h3>
+              <p class="section-copy">${currentIsAdmin() ? "Completed debates are added directly to results." : "Completed debates are sent to admin review."}</p>
+            </div>
+          </div>
+          ${renderLogDebateFormMarkup()}
+        </section>
+      </section>
+    `;
+  }
+
   function renderSchedulePage(model) {
     const scheduleSection = normalizeScheduleSection(state.scheduleSection);
 
@@ -5211,32 +5257,23 @@
           <section class="page-hero">
             <div>
               <span class="page-kicker">Admin</span>
-              <h2 class="page-title">Log Debates</h2>
+              <h2 class="page-title">Admin</h2>
             </div>
           </section>
 
-          <section class="section-grid">
-            <section class="section-panel is-disabled-panel" aria-disabled="true">
-              <div class="section-header">
-                <div>
-                  <h3 class="section-title">Awaiting Results</h3>
-                  <p class="section-copy">Admin only</p>
-                </div>
+          <section class="section-panel is-disabled-panel" aria-disabled="true">
+            <div class="section-header">
+              <div>
+                <h3 class="section-title">Awaiting Results</h3>
+                <p class="section-copy">Admin only</p>
               </div>
-              <div class="disabled-panel-copy">
-                Submitted debates appear here for admins to accept or reject.
+              <div class="section-actions">
+                <button class="secondary-btn" type="button" data-page-link="log">Log Debates</button>
               </div>
-            </section>
-
-            <section class="section-panel">
-              <div class="section-header">
-                <div>
-                  <h3 class="section-title">Log Debates</h3>
-                  <p class="section-copy">Submit a finished debate for admin review.</p>
-                </div>
-              </div>
-              ${renderLogDebateFormMarkup()}
-            </section>
+            </div>
+            <div class="disabled-panel-copy">
+              Submitted debates appear here for admins to accept or reject.
+            </div>
           </section>
         </section>
       `;
@@ -5250,31 +5287,20 @@
           </div>
         </section>
 
-        <section class="section-grid">
-          <section class="section-panel">
-            <div class="section-header">
-              <div>
-                <h3 class="section-title">Awaiting Results</h3>
-              </div>
+        <section class="section-panel">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">Awaiting Results</h3>
             </div>
-            ${renderScrollablePanel(
-              renderDebateList(model.unresolvedQueue, {
-                emptyTitle: "Nothing is waiting on admin",
-                emptyCopy: "",
-                showAdminControls: true
-              }),
-              "is-feed"
-            )}
-          </section>
-
-          <section class="section-panel">
-            <div class="section-header">
-              <div>
-                <h3 class="section-title">Log Debates</h3>
-              </div>
-            </div>
-            ${renderLogDebateFormMarkup()}
-          </section>
+          </div>
+          ${renderScrollablePanel(
+            renderDebateList(model.unresolvedQueue, {
+              emptyTitle: "Nothing is waiting on admin",
+              emptyCopy: "",
+              showAdminControls: true
+            }),
+            "is-feed"
+          )}
         </section>
 
         <section class="section-panel">
@@ -9579,7 +9605,11 @@
 
     if (action === "open-log-debates") {
       event.preventDefault();
-      setPage("settings", { settingsSection: "lazy" });
+      if (state.isMobileViewport) {
+        setPage("settings", { settingsSection: "lazy" });
+      } else {
+        setPage("log");
+      }
       return;
     }
 
