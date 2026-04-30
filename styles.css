@@ -78,6 +78,7 @@ html[data-theme="light"] {
 
 html {
   color-scheme: dark;
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -2545,6 +2546,21 @@ textarea:focus {
   border-radius: 2px;
 }
 
+body:not(.is-mobile-app) .page-shell {
+  animation: none;
+}
+
+body:not(.is-mobile-app) .schedule-page > .section-panel {
+  height: clamp(640px, calc(100vh - 238px), 920px);
+  max-height: clamp(640px, calc(100vh - 238px), 920px);
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
 .debate-card-link {
   cursor: pointer;
 }
@@ -3442,6 +3458,14 @@ body.is-mobile-app {
   overscroll-behavior-y: none;
   --mobile-tab-safe-pad: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.2rem), 0.7rem);
   --mobile-tabbar-height: 58px;
+  --mobile-viewport-height: 100svh;
+  --mobile-content-height: calc(var(--mobile-viewport-height) - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad));
+}
+
+@supports (height: 100dvh) {
+  body.is-mobile-app {
+    --mobile-viewport-height: 100dvh;
+  }
 }
 
 .is-mobile-app .toast-stack {
@@ -3454,7 +3478,7 @@ body.is-mobile-app {
 }
 
 .is-mobile-app .hub-shell {
-  min-height: 100svh;
+  min-height: var(--mobile-viewport-height);
   padding-bottom: calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad));
 }
 
@@ -3499,6 +3523,7 @@ body.is-mobile-app {
 
 .is-mobile-app .workspace {
   display: block;
+  min-height: var(--mobile-content-height);
   padding: 0 12px calc(var(--mobile-tabbar-height) + var(--mobile-tab-safe-pad) + 6px);
 }
 
@@ -3509,6 +3534,7 @@ body.is-mobile-app {
 
 .is-mobile-app .main-content {
   gap: 20px;
+  min-height: var(--mobile-content-height);
 }
 
 .is-mobile-app .sidebar {
@@ -3616,6 +3642,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 
 .is-mobile-app .mobile-page {
   gap: 18px;
+  min-height: var(--mobile-content-height);
   padding-top: 0;
 }
 
@@ -3676,19 +3703,26 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 }
 
 .is-mobile-app .mobile-scroll-page-block {
+  display: flex;
+  flex-direction: column;
+  height: var(--mobile-content-height);
+  min-height: 0;
   overflow: hidden;
 }
 
 .is-mobile-app .mobile-scroll-page-block > .panel-scroll.mobile-page-scroll {
   display: grid;
+  flex: 1 1 0;
   align-content: start;
   gap: 14px;
+  height: auto;
+  max-height: none;
   min-height: 0;
   margin-top: 10px;
 }
 
 .is-mobile-app .mobile-scroll-page-block > #mobile-search-results.mobile-page-scroll {
-  max-height: min(60svh, calc(100svh - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - 218px));
+  max-height: none;
 }
 
 .is-mobile-app .mobile-scroll-section {
@@ -4014,7 +4048,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 }
 
 .is-mobile-app .panel-scroll.mobile-page-scroll {
-  max-height: min(72svh, calc(100svh - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - 136px));
+  max-height: calc(var(--mobile-content-height) - 136px);
   padding-right: 2px;
   -webkit-overflow-scrolling: touch;
 }
