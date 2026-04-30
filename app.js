@@ -715,6 +715,54 @@
     return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "";
   }
 
+  function makeLocalDateFromDateText(dateText) {
+    const match = String(dateText || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+
+    return date;
+  }
+
+  async function fetchYouTubePublishedDate(rawUrl) {
+    const videoId = getYouTubeVideoId(rawUrl);
+    if (!videoId || typeof fetch !== "function") return null;
+
+    try {
+      const response = await fetch(`/api/youtube-published-date?videoId=${encodeURIComponent(videoId)}`, {
+        headers: { "Accept": "application/json" }
+      });
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      return makeLocalDateFromDateText(payload?.publishedDate);
+    } catch (error) {
+      console.warn("Could not read YouTube published date", error);
+      return null;
+    }
+  }
+
+  async function resolveLoggedDebateDate(scheduledForRaw, videoUrl, fallbackDate = new Date()) {
+    const safeScheduledFor = String(scheduledForRaw || "").trim();
+    if (safeScheduledFor) {
+      return new Date(safeScheduledFor);
+    }
+
+    const publishedDate = await fetchYouTubePublishedDate(videoUrl);
+    return publishedDate || fallbackDate;
+  }
+
   function syncBodyModalState() {
     document.body.classList.toggle("modal-open", Boolean(state.accountModalOpen || state.avatarCropOpen));
   }
@@ -3871,7 +3919,7 @@
 
     return `
       <section class="page-shell mobile-page">
-        <section class="mobile-block">
+        <section class="mobile-block mobile-scroll-page-block">
           <span class="page-kicker">Search</span>
           <h2 class="mobile-page-title">Find debates and debaters</h2>
           <label class="search-field mobile-search-field" for="mobile-search-input">
@@ -3897,7 +3945,7 @@
               &times;
             </button>
           </label>
-          <div id="mobile-search-results">
+          <div id="mobile-search-results" class="panel-scroll mobile-page-scroll">
             ${renderMobileSearchResults()}
           </div>
         </section>
@@ -4430,7 +4478,6 @@
               data-draft-owner="lazy"
               data-draft-field="scheduledFor"
               value="${escapeHtml(lazyDraft.scheduledFor)}"
-              required
             />
           </label>
         </div>
@@ -4479,52 +4526,55 @@
 
   function renderMobileScheduleFormBlock() {
     return `
-      <section class="mobile-block">
-        <form class="schedule-form" id="schedule-form">
-          <label class="field">
-            <span>Topic</span>
-            <input
-              type="text"
-              name="topic"
-              data-draft-owner="schedule"
-              data-draft-field="topic"
-              value="${escapeHtml(state.scheduleDraft.topic)}"
-              placeholder="Should cities replace cars with public transit corridors?"
-              required
-            />
-          </label>
-          ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
-          ${renderDraftParticipantFields("schedule")}
-          <label class="field mobile-datetime-field">
-            <span>Date and time</span>
-            <input
-              type="datetime-local"
-              name="scheduledFor"
-              data-draft-owner="schedule"
-              data-draft-field="scheduledFor"
-              value="${escapeHtml(state.scheduleDraft.scheduledFor)}"
-              required
-            />
-          </label>
-          <label class="field">
-            <span>Moderator</span>
-            <input
-              type="text"
-              name="moderator"
-              data-draft-owner="schedule"
-              data-draft-field="moderator"
-              value="${escapeHtml(state.scheduleDraft.moderator)}"
-              placeholder="Optional moderator"
-            />
-          </label>
-          <div class="form-actions">
-            <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
-              ${state.scheduleSaving ? "Scheduling..." : "Schedule"}
-            </button>
-            <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
-          </div>
-        </form>
-      </section>
+      ${renderScrollablePanel(
+        `
+          <form class="schedule-form" id="schedule-form">
+            <label class="field">
+              <span>Topic</span>
+              <input
+                type="text"
+                name="topic"
+                data-draft-owner="schedule"
+                data-draft-field="topic"
+                value="${escapeHtml(state.scheduleDraft.topic)}"
+                placeholder="Should cities replace cars with public transit corridors?"
+                required
+              />
+            </label>
+            ${renderDebateCategorySelect("schedule", state.scheduleDraft.category)}
+            ${renderDraftParticipantFields("schedule")}
+            <label class="field mobile-datetime-field">
+              <span>Date and time</span>
+              <input
+                type="datetime-local"
+                name="scheduledFor"
+                data-draft-owner="schedule"
+                data-draft-field="scheduledFor"
+                value="${escapeHtml(state.scheduleDraft.scheduledFor)}"
+                required
+              />
+            </label>
+            <label class="field">
+              <span>Moderator</span>
+              <input
+                type="text"
+                name="moderator"
+                data-draft-owner="schedule"
+                data-draft-field="moderator"
+                value="${escapeHtml(state.scheduleDraft.moderator)}"
+                placeholder="Optional moderator"
+              />
+            </label>
+            <div class="form-actions">
+              <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
+                ${state.scheduleSaving ? "Scheduling..." : "Schedule"}
+              </button>
+              <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
+            </div>
+          </form>
+        `,
+        "mobile-page-scroll"
+      )}
     `;
   }
 
@@ -4541,14 +4591,15 @@
 
   function renderMobileUpcomingDebatesBlock(model) {
     return `
-      <section class="mobile-block">
-        <div class="mobile-section-head">
-          <h3>Upcoming Debates</h3>
-        </div>
-        ${renderMobileDebateList([...model.upcoming, ...model.overdue], {
+      <div class="mobile-section-head">
+        <h3>Upcoming Debates</h3>
+      </div>
+      ${renderScrollablePanel(
+        renderMobileDebateList([...model.upcoming, ...model.overdue], {
           emptyTitle: "No scheduled debates"
-        })}
-      </section>
+        }),
+        "mobile-page-scroll"
+      )}
     `;
   }
 
@@ -4557,16 +4608,16 @@
 
     return `
       <section class="page-shell mobile-page">
-        <section class="mobile-block">
+        <section class="mobile-block mobile-scroll-page-block">
           <span class="page-kicker">Schedule</span>
           <h2 class="mobile-page-title">Schedule</h2>
           ${renderScheduleTabs(scheduleSection)}
+          ${
+            scheduleSection === "upcoming"
+              ? renderMobileUpcomingDebatesBlock(model)
+              : renderMobileScheduleFormBlock()
+          }
         </section>
-        ${
-          scheduleSection === "upcoming"
-            ? renderMobileUpcomingDebatesBlock(model)
-            : renderMobileScheduleFormBlock()
-        }
       </section>
     `;
   }
@@ -4574,7 +4625,7 @@
   function renderMobileArchivePage(model) {
     return `
       <section class="page-shell mobile-page">
-        <section class="mobile-block">
+        <section class="mobile-block mobile-scroll-page-block">
           <span class="page-kicker">Past Debates</span>
           <h2 class="mobile-page-title">Archive</h2>
           ${renderScrollablePanel(
@@ -4595,7 +4646,7 @@
   function renderMobileRankingsPage(model) {
     return `
       <section class="page-shell mobile-page">
-        <section class="mobile-block">
+        <section class="mobile-block mobile-scroll-page-block">
           <span class="page-kicker">Rankings</span>
           <h2 class="mobile-page-title">Rankings</h2>
           ${renderLeaderboardTabs(model.rankingsCategory)}
@@ -9020,8 +9071,7 @@
       return;
     }
 
-    const scheduledDate = new Date(scheduledForRaw);
-    if (!scheduledForRaw || Number.isNaN(scheduledDate.getTime())) {
+    if (scheduledForRaw && Number.isNaN(new Date(scheduledForRaw).getTime())) {
       showToast("Choose a valid debate date and time.", "error");
       return;
     }
@@ -9038,6 +9088,7 @@
         throw new Error("INVALID_DEBATERS");
       }
       const now = new Date();
+      const scheduledDate = await resolveLoggedDebateDate(scheduledForRaw, videoUrl, now);
       const actorName = state.username || (submittedByAdmin ? "admin" : "member");
       const videoPayload = buildDebateVideoPayload(videoUrl, {
         mode: videoMode,

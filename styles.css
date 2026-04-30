@@ -3679,6 +3679,18 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   border-bottom: 0;
 }
 
+.is-mobile-app .mobile-scroll-page-block {
+  overflow: hidden;
+}
+
+.is-mobile-app .mobile-scroll-page-block > .panel-scroll.mobile-page-scroll {
+  min-height: 0;
+}
+
+.is-mobile-app .mobile-scroll-page-block > #mobile-search-results.mobile-page-scroll {
+  max-height: min(62svh, calc(100svh - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - 206px));
+}
+
 .is-mobile-app .mobile-datetime-field input[type="datetime-local"] {
   width: min(100%, 252px);
   max-width: 252px;
