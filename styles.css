@@ -3556,10 +3556,6 @@ body.is-mobile-app {
   box-shadow: none;
 }
 
-.is-mobile-app .desktop-only-nav {
-  display: none;
-}
-
 .is-mobile-app .nav-btn::before {
   content: "";
   width: 19px;
@@ -3684,11 +3680,25 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 }
 
 .is-mobile-app .mobile-scroll-page-block > .panel-scroll.mobile-page-scroll {
+  display: grid;
+  align-content: start;
+  gap: 14px;
   min-height: 0;
+  margin-top: 10px;
 }
 
 .is-mobile-app .mobile-scroll-page-block > #mobile-search-results.mobile-page-scroll {
-  max-height: min(62svh, calc(100svh - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - 206px));
+  max-height: min(60svh, calc(100svh - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - 218px));
+}
+
+.is-mobile-app .mobile-scroll-section {
+  display: grid;
+  gap: 12px;
+}
+
+.is-mobile-app .mobile-scroll-section + .mobile-scroll-section {
+  padding-top: 16px;
+  border-top: 1px solid var(--surface-divider);
 }
 
 .is-mobile-app .mobile-datetime-field input[type="datetime-local"] {

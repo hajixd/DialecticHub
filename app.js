@@ -35,7 +35,7 @@
   const VIDEO_CLIP_SLIDER_STEP_SECONDS = 15;
   const VIDEO_CLIP_DEFAULT_END_SECONDS = 10 * 60;
   const PLACEHOLDER_UID_PREFIX = "invite:";
-  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "log", "archive", "rankings", "settings", "admin", "debate"]);
+  const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1100;
   const MIN_RANKED_DEBATES = 3;
   const PLACEMENT_GAME_WEIGHT = 2;
@@ -82,7 +82,7 @@
     profileCategory: "",
     debateId: getDebateIdFromUrl(),
     settingsSection: "root",
-    scheduleSection: "new",
+    scheduleSection: "future",
     archiveEditMode: false,
     debateEditMode: false,
     searchTerm: "",
@@ -365,10 +365,10 @@
 
   function normalizeScheduleSection(value) {
     const safeValue = String(value || "").trim().toLowerCase();
-    if (safeValue === "upcoming" || safeValue === "log") {
-      return safeValue;
+    if (safeValue === "past" || safeValue === "log") {
+      return "past";
     }
-    return "new";
+    return "future";
   }
 
   function isDebateAwaitingReview(debate) {
@@ -1112,6 +1112,7 @@
 
   function getPageFromUrl() {
     const page = new URL(window.location.href).searchParams.get("page") || "dashboard";
+    if (page === "log") return "schedule";
     return VALID_PAGES.has(page) ? page : "dashboard";
   }
 
@@ -1133,7 +1134,7 @@
 
   function normalizeSettingsSection(value) {
     const safeValue = String(value || "").trim().toLowerCase();
-    if (["profile", "awaiting", "lazy", "users"].includes(safeValue)) {
+    if (["profile", "awaiting", "users"].includes(safeValue)) {
       return safeValue;
     }
     return "root";
@@ -1707,8 +1708,7 @@
   function getSearchPages() {
     const pages = [
       { page: "dashboard", title: "My Profile", note: "Open your profile" },
-      { page: "schedule", title: "Schedule Debate", note: "Open the upcoming board" },
-      { page: "log", title: "Log Debates", note: currentIsAdmin() ? "Log a completed debate" : "Submit a completed debate" },
+      { page: "schedule", title: "Log", note: "Log a past or future debate" },
       { page: "archive", title: "Past Debates", note: "Open the resolved archive" },
       { page: "rankings", title: "Rankings", note: "Open rankings" }
     ];
@@ -1828,7 +1828,7 @@
           categoryLabel: getDebateCategoryLabel(debate.category),
           thumbnailUrl: getYouTubeThumbnailUrl(debate.videoUrl || debate.videoEmbedUrl || ""),
           meta: [getDebateCategoryLabel(debate.category), people].filter(Boolean).join(" • ") || "Debate",
-          note: `${debate.status === "resolved" ? "Open archive" : "Open schedule board"} • ${formatShortDate(debate.scheduledFor)}`,
+          note: `${debate.status === "resolved" ? "Open archive" : "Open log"} • ${formatShortDate(debate.scheduledFor)}`,
           debateId: debate.id,
           page: debate.status === "resolved" ? "archive" : "schedule",
           term: debate.topic || trimmedQuery
@@ -1881,7 +1881,7 @@
         kind: "Moderator",
         title: formatDisplayName(moderator, "Moderator"),
         meta: hasUpcoming ? `${counts.upcoming} upcoming` : `${counts.resolved} resolved`,
-        note: `Search moderator on ${hasUpcoming ? "schedule" : "archive"}`,
+        note: `Search moderator on ${hasUpcoming ? "log" : "archive"}`,
         page: hasUpcoming ? "schedule" : "archive",
         term: moderator
       });
@@ -3765,18 +3765,13 @@
       return;
     }
 
-    if (mobileViewport && state.currentPage === "log") {
-      setPage("settings", { settingsSection: "lazy", replace: true });
-      return;
-    }
-
     if (!mobileViewport && state.currentPage === "settings") {
       setPage(currentIsAdmin() ? "admin" : "dashboard", { replace: true });
       return;
     }
 
     if (!mobileViewport && state.currentPage === "admin" && !currentIsAdmin()) {
-      setPage("log", { replace: true });
+      setPage("schedule", { replace: true });
       return;
     }
 
@@ -3858,8 +3853,6 @@
         return renderSearchPage();
       case "schedule":
         return renderSchedulePage(model);
-      case "log":
-        return renderLogDebatesPage();
       case "archive":
         return renderArchivePage(model);
       case "rankings":
@@ -3898,8 +3891,6 @@
         return renderMobileSearchPage();
       case "schedule":
         return renderMobileSchedulePage(model);
-      case "log":
-        return renderMobileTooLazyDebatesPage();
       case "archive":
         return renderMobileArchivePage(model);
       case "rankings":
@@ -4134,7 +4125,7 @@
 
     return `
       <section class="page-shell mobile-page">
-        <section class="mobile-block mobile-profile-block">
+        <section class="mobile-block mobile-profile-block mobile-scroll-page-block">
           <span class="page-kicker">${model.profileIsCurrentUser ? "My Profile" : "Profile"}</span>
           <div class="mobile-identity">
             ${renderAvatarChipHtml({
@@ -4147,53 +4138,50 @@
               <h2 class="mobile-page-title">${escapeHtml(formatDisplayName(model.profileSnapshot.name, "Debater"))}</h2>
             </div>
           </div>
-          ${renderCategoryRatingGrid(model.profileCategoryRatings, {
-            mobile: true,
-            interactive: true,
-            preferredCategoryId: model.preferredProfileCategory?.id,
-            selectedCategoryId: model.selectedProfileCategory?.id
-          })}
-          ${renderProfileRatingHistoryPanel(model.selectedProfileCategory, model.profileCategoryHistory, { mobile: true })}
-          <div class="mobile-inline-stats">
-            <article class="mobile-stat">
-              <span class="summary-label">Debates</span>
-              <strong>${model.profileCategorySnapshot.debates}</strong>
-            </article>
-            <article class="mobile-stat">
-              <span class="summary-label">Rank</span>
-              <strong>${escapeHtml(categoryRankLabel)}</strong>
-              <span class="mobile-row-meta">${escapeHtml(selectedCategory?.label || "Category")}</span>
-            </article>
-          </div>
-          <div class="mobile-record-line">
-            ${renderRecordChips(model.profileCategorySnapshot, { compact: true, labelStyle: "full" })}
-          </div>
-        </section>
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Upcoming</h3>
-          </div>
           ${renderScrollablePanel(
-            renderMobileDebateList(model.profileDebatesUpcomingFiltered, {
-              emptyTitle: "No upcoming debates"
-            }),
-            "mobile-profile-scroll"
-          )}
-        </section>
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Results</h3>
-          </div>
-          ${renderScrollablePanel(
-            renderMobileDebateList(model.profileDebatesPastFiltered, {
-              emptyTitle: "No results yet",
-              hideStatus: true,
-              hideResultPill: true,
-              fullWidthCategory: true
-            }),
-            "mobile-profile-scroll"
+            `
+              ${renderCategoryRatingGrid(model.profileCategoryRatings, {
+                mobile: true,
+                interactive: true,
+                preferredCategoryId: model.preferredProfileCategory?.id,
+                selectedCategoryId: model.selectedProfileCategory?.id
+              })}
+              ${renderProfileRatingHistoryPanel(model.selectedProfileCategory, model.profileCategoryHistory, { mobile: true })}
+              <div class="mobile-inline-stats">
+                <article class="mobile-stat">
+                  <span class="summary-label">Debates</span>
+                  <strong>${model.profileCategorySnapshot.debates}</strong>
+                </article>
+                <article class="mobile-stat">
+                  <span class="summary-label">Rank</span>
+                  <strong>${escapeHtml(categoryRankLabel)}</strong>
+                  <span class="mobile-row-meta">${escapeHtml(selectedCategory?.label || "Category")}</span>
+                </article>
+              </div>
+              <div class="mobile-record-line">
+                ${renderRecordChips(model.profileCategorySnapshot, { compact: true, labelStyle: "full" })}
+              </div>
+              <section class="mobile-scroll-section">
+                <div class="mobile-section-head">
+                  <h3>Upcoming</h3>
+                </div>
+                ${renderMobileDebateList(model.profileDebatesUpcomingFiltered, {
+                  emptyTitle: "No upcoming debates"
+                })}
+              </section>
+              <section class="mobile-scroll-section">
+                <div class="mobile-section-head">
+                  <h3>Results</h3>
+                </div>
+                ${renderMobileDebateList(model.profileDebatesPastFiltered, {
+                  emptyTitle: "No results yet",
+                  hideStatus: true,
+                  hideResultPill: true,
+                  fullWidthCategory: true
+                })}
+              </section>
+            `,
+            "mobile-page-scroll"
           )}
         </section>
       </section>
@@ -4239,7 +4227,7 @@
 
     return `
       <section class="page-shell mobile-page">
-        <section class="mobile-block">
+        <section class="mobile-block mobile-scroll-page-block">
           <div class="mobile-section-head mobile-page-head">
             <div class="mobile-page-head-copy">
               <span class="page-kicker">Debate</span>
@@ -4247,92 +4235,94 @@
             </div>
             ${renderDebateEditButton(debate, { mobile: true })}
           </div>
-          <div class="badge-row mobile-debate-category-row">
-            ${renderCategoryBadge(debate.category, "category-tag-wide mobile-debate-category-tag")}
-          </div>
-          ${renderDebatePeopleRow(debate, { mobile: true, className: "mobile-debate-people" })}
-          <div class="mobile-inline-stats">
-            <article class="mobile-stat">
-              <span class="summary-label">Scheduled</span>
-              <strong>${escapeHtml(formatDateTime(debate.scheduledFor))}</strong>
-            </article>
-            <article class="mobile-stat">
-              <span class="summary-label">Category</span>
-              <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
-            </article>
-            <article class="mobile-stat${resultToneClass}">
-              <span class="summary-label">${escapeHtml(resultDetailLabel)}</span>
-              <strong>${
-                isAwaitingReview || debate.result === "draw"
-                  ? escapeHtml(resultDetailValue)
-                  : renderTeamIdentityInline(debate, debate.result)
-              }</strong>
-            </article>
-            <article class="mobile-stat${loserToneClass}">
-              <span class="summary-label">Loser</span>
-              <strong>${
-                loserName
-                  ? renderTeamIdentityInline(debate, debate.result === "a" ? "b" : "a")
-                  : "N/A"
-              }</strong>
-            </article>
-          </div>
-        </section>
-
-        ${renderDebateAdminTools(debate, { mobile: true })}
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Video</h3>
-          </div>
-          ${
-            model.selectedDebateVideoEmbedUrl
-              ? `
-                <div class="video-frame-shell">
-                  <iframe
-                    src="${escapeHtml(model.selectedDebateVideoEmbedUrl)}"
-                    title="${escapeHtml(debate.topic || "Debate video")}"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowfullscreen
-                  ></iframe>
+          ${renderScrollablePanel(
+            `
+              <div class="badge-row mobile-debate-category-row">
+                ${renderCategoryBadge(debate.category, "category-tag-wide mobile-debate-category-tag")}
+              </div>
+              ${renderDebatePeopleRow(debate, { mobile: true, className: "mobile-debate-people" })}
+              <div class="mobile-inline-stats">
+                <article class="mobile-stat">
+                  <span class="summary-label">Scheduled</span>
+                  <strong>${escapeHtml(formatDateTime(debate.scheduledFor))}</strong>
+                </article>
+                <article class="mobile-stat">
+                  <span class="summary-label">Category</span>
+                  <strong>${escapeHtml(getDebateCategoryLabel(debate.category))}</strong>
+                </article>
+                <article class="mobile-stat${resultToneClass}">
+                  <span class="summary-label">${escapeHtml(resultDetailLabel)}</span>
+                  <strong>${
+                    isAwaitingReview || debate.result === "draw"
+                      ? escapeHtml(resultDetailValue)
+                      : renderTeamIdentityInline(debate, debate.result)
+                  }</strong>
+                </article>
+                <article class="mobile-stat${loserToneClass}">
+                  <span class="summary-label">Loser</span>
+                  <strong>${
+                    loserName
+                      ? renderTeamIdentityInline(debate, debate.result === "a" ? "b" : "a")
+                      : "N/A"
+                  }</strong>
+                </article>
+              </div>
+              ${renderDebateAdminTools(debate, { mobile: true })}
+              <section class="mobile-scroll-section">
+                <div class="mobile-section-head">
+                  <h3>Video</h3>
                 </div>
-              `
-              : renderEmptyState(debate.status === "resolved" ? "No video yet" : "Video after resolution", "")
-          }
-          ${
-            model.selectedDebateCanEditVideo && state.debateEditMode
-              ? `
-                  <form class="stack-form" id="debate-video-form">
-                    <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
-                    ${renderDebateVideoFormFields(debate, { inputNamePrefix: "mobile-debate-video" })}
-                    <div class="form-actions">
-                      <button class="primary-btn" type="submit" ${videoBusy ? "disabled" : ""}>
-                        ${videoBusy ? "Saving..." : debate.videoUrl ? "Update video" : "Add video"}
+                ${
+                  model.selectedDebateVideoEmbedUrl
+                    ? `
+                      <div class="video-frame-shell">
+                        <iframe
+                          src="${escapeHtml(model.selectedDebateVideoEmbedUrl)}"
+                          title="${escapeHtml(debate.topic || "Debate video")}"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          allowfullscreen
+                        ></iframe>
+                      </div>
+                    `
+                    : renderEmptyState(debate.status === "resolved" ? "No video yet" : "Video after resolution", "")
+                }
+                ${
+                  model.selectedDebateCanEditVideo && state.debateEditMode
+                    ? `
+                        <form class="stack-form" id="debate-video-form">
+                          <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
+                          ${renderDebateVideoFormFields(debate, { inputNamePrefix: "mobile-debate-video" })}
+                          <div class="form-actions">
+                            <button class="primary-btn" type="submit" ${videoBusy ? "disabled" : ""}>
+                              ${videoBusy ? "Saving..." : debate.videoUrl ? "Update video" : "Add video"}
+                            </button>
+                          </div>
+                        </form>
+                    `
+                    : ""
+                }
+              </section>
+              <section class="mobile-scroll-section">
+                <div class="mobile-section-head">
+                  <h3>Comments</h3>
+                </div>
+                ${renderScrollablePanel(renderCommentList(model.selectedDebateComments), "is-comments")}
+                <form class="stack-form" id="debate-comment-form">
+                  <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
+                  <label class="field">
+                    <span>Add comment</span>
+                    <textarea name="commentText" placeholder="Add a quick note or takeaway."></textarea>
+                  </label>
+                  <div class="form-actions">
+                    <button class="primary-btn" type="submit" ${commentBusy ? "disabled" : ""}>
+                      ${commentBusy ? "Posting..." : "Post comment"}
                     </button>
                   </div>
                 </form>
-              `
-              : ""
-          }
-        </section>
-
-        <section class="mobile-block">
-          <div class="mobile-section-head">
-            <h3>Comments</h3>
-          </div>
-          ${renderScrollablePanel(renderCommentList(model.selectedDebateComments), "is-comments")}
-          <form class="stack-form" id="debate-comment-form">
-            <input type="hidden" name="debateId" value="${escapeHtml(debate.id)}" />
-            <label class="field">
-              <span>Add comment</span>
-              <textarea name="commentText" placeholder="Add a quick note or takeaway."></textarea>
-            </label>
-            <div class="form-actions">
-              <button class="primary-btn" type="submit" ${commentBusy ? "disabled" : ""}>
-                ${commentBusy ? "Posting..." : "Post comment"}
-              </button>
-            </div>
-          </form>
+              </section>
+            `,
+            "mobile-page-scroll"
+          )}
         </section>
       </section>
     `;
@@ -4415,12 +4405,12 @@
   function renderScheduleTabs(selectedSection) {
     const safeSection = normalizeScheduleSection(selectedSection);
     const tabs = [
-      { id: "upcoming", label: "Upcoming Debates" },
-      { id: "new", label: "New Debate" }
+      { id: "past", label: "Past Debate" },
+      { id: "future", label: "Future Debate" }
     ];
 
     return `
-      <div class="leaderboard-tabs schedule-tabs" role="tablist" aria-label="Schedule sections">
+      <div class="leaderboard-tabs schedule-tabs" role="tablist" aria-label="Log sections">
         ${tabs
           .map((tab) => {
             const isActive = tab.id === safeSection;
@@ -4567,7 +4557,7 @@
             </label>
             <div class="form-actions">
               <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
-                ${state.scheduleSaving ? "Scheduling..." : "Schedule"}
+                ${state.scheduleSaving ? "Logging..." : "Log future debate"}
               </button>
               <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
             </div>
@@ -4578,43 +4568,27 @@
     `;
   }
 
-  function renderMobileLogDebatesBlock() {
+  function renderMobilePastDebateBlock() {
     return `
-      <section class="mobile-block">
-        <div class="mobile-section-head">
-          <h3>Log Debates</h3>
-        </div>
-        ${renderLogDebateFormMarkup({ mobile: true })}
-      </section>
-    `;
-  }
-
-  function renderMobileUpcomingDebatesBlock(model) {
-    return `
-      <div class="mobile-section-head">
-        <h3>Upcoming Debates</h3>
-      </div>
       ${renderScrollablePanel(
-        renderMobileDebateList([...model.upcoming, ...model.overdue], {
-          emptyTitle: "No scheduled debates"
-        }),
+        renderLogDebateFormMarkup({ mobile: true }),
         "mobile-page-scroll"
       )}
     `;
   }
 
   function renderMobileSchedulePage(model) {
-    const scheduleSection = normalizeScheduleSection(state.scheduleSection) === "upcoming" ? "upcoming" : "new";
+    const scheduleSection = normalizeScheduleSection(state.scheduleSection);
 
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block mobile-scroll-page-block">
-          <span class="page-kicker">Schedule</span>
-          <h2 class="mobile-page-title">Schedule</h2>
+          <span class="page-kicker">Debate log</span>
+          <h2 class="mobile-page-title">Log</h2>
           ${renderScheduleTabs(scheduleSection)}
           ${
-            scheduleSection === "upcoming"
-              ? renderMobileUpcomingDebatesBlock(model)
+            scheduleSection === "past"
+              ? renderMobilePastDebateBlock()
               : renderMobileScheduleFormBlock()
           }
         </section>
@@ -4678,12 +4652,6 @@
         disabled: !currentIsAdmin()
       },
       {
-        section: "lazy",
-        title: "Log Debates",
-        copy: currentIsAdmin() ? "Log a finished debate directly." : "Submit a finished debate for admin review.",
-        disabled: false
-      },
-      {
         section: "users",
         title: "Users",
         copy: currentIsAdmin() ? "Search and manage user accounts." : "Admin only",
@@ -4703,8 +4671,8 @@
                   <button
                     class="mobile-settings-tab${item.disabled ? " is-disabled" : ""}"
                     type="button"
-                    data-action="${item.section === "lazy" ? "open-log-debates" : "open-settings-section"}"
-                    ${item.section === "lazy" ? "" : `data-settings-section="${escapeHtml(item.section)}"`}
+                    data-action="open-settings-section"
+                    data-settings-section="${escapeHtml(item.section)}"
                     ${item.disabled ? "disabled" : ""}
                   >
                     <strong>${escapeHtml(item.title)}</strong>
@@ -4779,13 +4747,6 @@
     );
   }
 
-  function renderMobileTooLazyDebatesPage() {
-    return renderMobileSettingsSectionShell(
-      "Log Debates",
-      renderLogDebateFormMarkup({ mobile: true })
-    );
-  }
-
   function renderMobileUsersSettingsPage() {
     return renderMobileSettingsSectionShell("Users", renderAdminUserList());
   }
@@ -4795,10 +4756,6 @@
 
     if (section === "profile") {
       return renderMobileProfileSettingsPage();
-    }
-
-    if (section === "lazy") {
-      return renderMobileTooLazyDebatesPage();
     }
 
     if (currentIsAdmin()) {
@@ -4842,7 +4799,7 @@
             ${
               model.profileIsCurrentUser
                 ? `
-                  <button class="primary-btn" type="button" data-page-link="schedule">Schedule a Debate</button>
+                  <button class="primary-btn" type="button" data-page-link="schedule">Log a Debate</button>
                   <button class="secondary-btn" type="button" data-page-link="archive">View Archive</button>
                 `
                 : `
@@ -5103,7 +5060,7 @@
       <section class="section-panel">
         <div class="section-header">
           <div>
-            <h3 class="section-title">New Debate</h3>
+            <h3 class="section-title">Future Debate</h3>
           </div>
         </div>
         <form class="schedule-form" id="schedule-form">
@@ -5156,31 +5113,11 @@
           </label>
           <div class="form-actions">
             <button class="primary-btn" type="submit" ${state.scheduleSaving ? "disabled" : ""}>
-              ${state.scheduleSaving ? "Scheduling..." : "Schedule debate"}
+              ${state.scheduleSaving ? "Logging..." : "Log future debate"}
             </button>
             <button class="ghost-btn" type="button" data-action="reset-schedule-form">Reset</button>
           </div>
         </form>
-      </section>
-    `;
-  }
-
-  function renderUpcomingDebatesPanel(model) {
-    return `
-      <section class="section-panel">
-        <div class="section-header">
-          <div>
-            <h3 class="section-title">Upcoming Debates</h3>
-          </div>
-        </div>
-        ${renderScrollablePanel(
-          renderDebateList([...model.upcoming, ...model.overdue], {
-            emptyTitle: "No scheduled debates",
-            emptyCopy: "",
-            showAdminControls: currentIsAdmin()
-          }),
-          "is-feed"
-        )}
       </section>
     `;
   }
@@ -5190,33 +5127,11 @@
       <section class="section-panel">
         <div class="section-header">
           <div>
-            <h3 class="section-title">Log Debates</h3>
+            <h3 class="section-title">Past Debate</h3>
+            <p class="section-copy">${currentIsAdmin() ? "Completed debates are added directly to results." : "Completed debates are sent to admin review."}</p>
           </div>
         </div>
         ${renderLogDebateFormMarkup()}
-      </section>
-    `;
-  }
-
-  function renderLogDebatesPage() {
-    return `
-      <section class="page-shell log-page">
-        <section class="page-hero">
-          <div>
-            <span class="page-kicker">Debate log</span>
-            <h2 class="page-title">Log Debates</h2>
-          </div>
-        </section>
-
-        <section class="section-panel">
-          <div class="section-header">
-            <div>
-              <h3 class="section-title">Log Debates</h3>
-              <p class="section-copy">${currentIsAdmin() ? "Completed debates are added directly to results." : "Completed debates are sent to admin review."}</p>
-            </div>
-          </div>
-          ${renderLogDebateFormMarkup()}
-        </section>
       </section>
     `;
   }
@@ -5228,15 +5143,15 @@
       <section class="page-shell schedule-page">
         <section class="page-hero">
           <div>
-            <span class="page-kicker">Schedule Debate</span>
-            <h2 class="page-title">Schedule</h2>
+            <span class="page-kicker">Debate log</span>
+            <h2 class="page-title">Log</h2>
           </div>
           ${renderScheduleTabs(scheduleSection)}
         </section>
 
         ${
-          scheduleSection === "upcoming"
-            ? renderUpcomingDebatesPanel(model)
+          scheduleSection === "past"
+            ? renderLogDebatesPanel()
             : renderScheduleFormPanel()
         }
       </section>
@@ -5319,7 +5234,7 @@
                 <p class="section-copy">Admin only</p>
               </div>
               <div class="section-actions">
-                <button class="secondary-btn" type="button" data-page-link="log">Log Debates</button>
+                <button class="secondary-btn" type="button" data-page-link="schedule">Log</button>
               </div>
             </div>
             <div class="disabled-panel-copy">
@@ -8780,7 +8695,7 @@
       state.userProfiles = [];
       state.profileUid = "";
       state.settingsSection = "root";
-      state.scheduleSection = "new";
+      state.scheduleSection = "future";
       state.archiveEditMode = false;
       state.debateEditMode = false;
       state.directory = [];
@@ -8807,7 +8722,7 @@
       state.profilePictureTargetName = "";
       state.rankingsCategory = "";
       state.settingsSection = "root";
-      state.scheduleSection = "new";
+      state.scheduleSection = "future";
       state.archiveEditMode = false;
       state.debateEditMode = false;
       state.scheduleDraft = makeDefaultScheduleDraft(String(user.uid || ""));
@@ -8922,11 +8837,11 @@
     const description = String(formData.get("description") || "").trim();
 
     if (!topic) {
-      showToast("Add a topic or resolution before scheduling.", "error");
+      showToast("Add a topic or resolution before logging.", "error");
       return;
     }
     if (participantSelections.some((entry) => !entry.selection)) {
-      showToast(getDraftParticipantRequirementMessage(teamSize, "scheduling"), "error");
+      showToast(getDraftParticipantRequirementMessage(teamSize, "logging"), "error");
       return;
     }
     if (new Set(participantSelections.map((entry) => entry.selection)).size !== participantSelections.length) {
@@ -8934,7 +8849,7 @@
       return;
     }
     if (!isValidDebateCategory(category)) {
-      showToast("Choose a category before scheduling.", "error");
+      showToast("Choose a category before logging.", "error");
       return;
     }
 
@@ -8989,7 +8904,7 @@
 
         state.scheduleDraft = makeDefaultScheduleDraft(String(state.user.uid || ""));
         ensureScheduleDraftParticipants();
-        showToast("Debate scheduled.", "success");
+        showToast("Future debate logged.", "success");
         setPage("dashboard");
         return;
       }
@@ -9017,13 +8932,13 @@
 
       state.scheduleDraft = makeDefaultScheduleDraft(String(state.user.uid || ""));
       ensureScheduleDraftParticipants();
-      showToast("Debate scheduled.", "success");
+      showToast("Future debate logged.", "success");
       setPage("dashboard");
     } catch (error) {
-      console.warn("Could not schedule debate", error);
+      console.warn("Could not log future debate", error);
       const message = isFirestorePermissionDenied(error)
-        ? getAdminRulesDeployMessage("scheduling debates")
-        : "Could not schedule that debate right now.";
+        ? getAdminRulesDeployMessage("logging future debates")
+        : "Could not log that future debate right now.";
       showToast(message, "error");
     } finally {
       state.scheduleSaving = false;
@@ -9651,16 +9566,6 @@
     if (action === "open-settings-section") {
       event.preventDefault();
       setSettingsSection(actionButton.getAttribute("data-settings-section"));
-      return;
-    }
-
-    if (action === "open-log-debates") {
-      event.preventDefault();
-      if (state.isMobileViewport) {
-        setPage("settings", { settingsSection: "lazy" });
-      } else {
-        setPage("log");
-      }
       return;
     }
 
