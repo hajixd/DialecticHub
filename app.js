@@ -1772,17 +1772,20 @@
     return pages;
   }
 
-  function buildSearchSuggestions(query) {
+  function buildSearchSuggestions(query, options = {}) {
     const trimmedQuery = String(query || "").trim();
     if (!trimmedQuery) return [];
 
     const needle = trimmedQuery.toLowerCase();
     const currentUid = String(state.user?.uid || "").trim();
+    const resultLimit = options.limit === "all"
+      ? Infinity
+      : Math.max(1, Number(options.limit) || 8);
     const suggestions = [];
     const seen = new Set();
 
     function addSuggestion(suggestion) {
-      if (!suggestion || suggestions.length >= 8 || seen.has(suggestion.key)) return;
+      if (!suggestion || suggestions.length >= resultLimit || seen.has(suggestion.key)) return;
       seen.add(suggestion.key);
       suggestions.push(suggestion);
     }
@@ -2058,7 +2061,12 @@
 
   function renderSearchResultsList(className = "") {
     const query = String(state.searchDraft || "").trim();
-    state.searchSuggestions = buildSearchSuggestions(query);
+    const classes = ["search-popover"];
+    if (className) {
+      classes.push(String(className).trim());
+    }
+    const detailed = classes.includes("search-results-panel") || classes.includes("mobile-search-results");
+    state.searchSuggestions = buildSearchSuggestions(query, { limit: detailed ? "all" : 8 });
 
     if (!query) {
       state.searchHighlightIndex = -1;
@@ -2073,12 +2081,6 @@
     if (state.searchHighlightIndex >= state.searchSuggestions.length) {
       state.searchHighlightIndex = 0;
     }
-
-    const classes = ["search-popover"];
-    if (className) {
-      classes.push(String(className).trim());
-    }
-    const detailed = classes.includes("search-results-panel") || classes.includes("mobile-search-results");
 
     return `
       <div class="${classes.join(" ")}" role="listbox" aria-label="Search results">
@@ -2138,7 +2140,7 @@
   }
 
   function refreshSearchSuggestions() {
-    state.searchSuggestions = buildSearchSuggestions(state.searchDraft);
+    state.searchSuggestions = buildSearchSuggestions(state.searchDraft, { limit: 8 });
     state.searchMenuOpen = Boolean(String(state.searchDraft || "").trim()) && state.searchSuggestions.length > 0;
     state.searchHighlightIndex = state.searchSuggestions.length ? 0 : -1;
     syncSearchUi();
@@ -9904,16 +9906,40 @@
     };
   }
 
-  function waitForMs(ms) {
-    return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-  }
-
   function prefersReducedMotion() {
     try {
       return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     } catch (_) {
       return false;
     }
+  }
+
+  function waitForNamedAnimation(node, animationName, fallbackMs) {
+    return new Promise((resolve) => {
+      if (!(node instanceof HTMLElement)) {
+        resolve();
+        return;
+      }
+
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timer);
+        node.removeEventListener("animationend", handleAnimationEnd);
+        node.removeEventListener("animationcancel", finish);
+        resolve();
+      };
+      const handleAnimationEnd = (event) => {
+        if (event.target === node && event.animationName === animationName) {
+          finish();
+        }
+      };
+      const timer = window.setTimeout(finish, Math.max(0, Number(fallbackMs) || 0));
+
+      node.addEventListener("animationend", handleAnimationEnd);
+      node.addEventListener("animationcancel", finish);
+    });
   }
 
   function getReviewCardFromTrigger(triggerNode) {
@@ -9927,16 +9953,32 @@
 
     const safeOutcome = outcome === "decline" ? "decline" : "accept";
     card.style.setProperty("--review-card-height", `${Math.ceil(card.getBoundingClientRect().height)}px`);
+    const list = card.closest(".debate-list");
+    if (list instanceof HTMLElement) {
+      const styles = window.getComputedStyle(list);
+      card.style.setProperty("--review-list-gap", styles.rowGap || styles.gap || "12px");
+    }
+    const slide = card.closest(".mobile-review-slide");
+    if (slide instanceof HTMLElement) {
+      const rail = slide.closest(".mobile-review-rail");
+      const railStyles = rail instanceof HTMLElement ? window.getComputedStyle(rail) : null;
+      slide.style.setProperty("--review-slide-gap", railStyles?.columnGap || railStyles?.gap || "14px");
+      slide.classList.add("is-review-slide-exiting");
+    }
     card.classList.remove("is-review-accept", "is-review-decline");
     card.classList.add("is-reviewing", `is-review-${safeOutcome}`);
     card.setAttribute("aria-busy", "true");
+    if (triggerNode instanceof HTMLElement) {
+      triggerNode.classList.add("is-review-decision-selected");
+      triggerNode.setAttribute("aria-pressed", "true");
+    }
     card.querySelectorAll("button, input, select, textarea").forEach((node) => {
       if (node instanceof HTMLButtonElement || node instanceof HTMLInputElement || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) {
         node.disabled = true;
       }
     });
 
-    await waitForMs(prefersReducedMotion() ? 80 : 360);
+    await waitForNamedAnimation(card, "review-card-decision", prefersReducedMotion() ? 110 : 680);
   }
 
   async function reviewSubmittedDebate(debateId, outcome, triggerNode = null) {
