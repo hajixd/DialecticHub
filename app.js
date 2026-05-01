@@ -4034,6 +4034,7 @@
     const showStatusChip = !options.hideStatus;
     const showResultPill = !options.hideResultPill && Boolean(resultLabel);
     const isAdminReviewCard = Boolean(options.adminReviewCard && isAwaitingReview);
+    const hideReviewActions = isActiveDebateEdit(debate);
     const categoryClassName = options.fullWidthCategory || isAdminReviewCard ? "category-tag-wide" : "";
     const statusClassName = options.fullWidthStatus || isAdminReviewCard ? "status-chip-wide" : "";
 
@@ -4062,37 +4063,43 @@
                   isAwaitingReview
                     ? `
                       ${renderAdminQueueVideoEmbed(debate, { mobile: true })}
-                      <div class="mobile-admin-actions admin-review-actions">
-                        <button
-                          class="result-btn win"
-                          type="button"
-                          data-action="review-submitted-debate"
-                          data-debate-id="${escapeHtml(debate.id)}"
-                          data-outcome="accept"
-                          ${isBusy ? "disabled" : ""}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          class="result-btn reopen"
-                          type="button"
-                          data-action="review-submitted-debate"
-                          data-debate-id="${escapeHtml(debate.id)}"
-                          data-outcome="decline"
-                          ${isBusy ? "disabled" : ""}
-                        >
-                          Decline
-                        </button>
-                        <button
-                          class="result-btn edit"
-                          type="button"
-                          data-action="edit-debate"
-                          data-debate-id="${escapeHtml(debate.id)}"
-                          ${isBusy ? "disabled" : ""}
-                        >
-                          Edit
-                        </button>
-                      </div>
+                      ${
+                        hideReviewActions
+                          ? ""
+                          : `
+                            <div class="mobile-admin-actions admin-review-actions">
+                              <button
+                                class="result-btn win"
+                                type="button"
+                                data-action="review-submitted-debate"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                data-outcome="accept"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Accept
+                              </button>
+                              <button
+                                class="result-btn reopen"
+                                type="button"
+                                data-action="review-submitted-debate"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                data-outcome="decline"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Decline
+                              </button>
+                              <button
+                                class="result-btn edit"
+                                type="button"
+                                data-action="edit-debate"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          `
+                      }
                     `
                     : `
                       ${renderResolveVideoField(debate, { mobile: true })}
@@ -5824,6 +5831,7 @@
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultDetailLabel = isAwaitingReview ? "Status" : "Winner";
     const resultDetailValue = isAwaitingReview ? debateStatus.label : winnerName || "N/A";
+    const hideReviewActions = isActiveDebateEdit(debate);
     const resultToneClass = isAwaitingReview
       ? " is-review"
       : debate.status === "resolved" && debate.result === "draw"
@@ -5875,37 +5883,43 @@
                   isAwaitingReview
                     ? `
                       ${renderAdminQueueVideoEmbed(debate)}
-                      <div class="admin-actions admin-review-actions">
-                        <button
-                          class="result-btn win"
-                          type="button"
-                          data-action="review-submitted-debate"
-                          data-debate-id="${escapeHtml(debate.id)}"
-                          data-outcome="accept"
-                          ${isBusy ? "disabled" : ""}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          class="result-btn reopen"
-                          type="button"
-                          data-action="review-submitted-debate"
-                          data-debate-id="${escapeHtml(debate.id)}"
-                          data-outcome="decline"
-                          ${isBusy ? "disabled" : ""}
-                        >
-                          Decline
-                        </button>
-                        <button
-                          class="result-btn edit"
-                          type="button"
-                          data-action="edit-debate"
-                          data-debate-id="${escapeHtml(debate.id)}"
-                          ${isBusy ? "disabled" : ""}
-                        >
-                          Edit
-                        </button>
-                      </div>
+                      ${
+                        hideReviewActions
+                          ? ""
+                          : `
+                            <div class="admin-actions admin-review-actions">
+                              <button
+                                class="result-btn win"
+                                type="button"
+                                data-action="review-submitted-debate"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                data-outcome="accept"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Accept
+                              </button>
+                              <button
+                                class="result-btn reopen"
+                                type="button"
+                                data-action="review-submitted-debate"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                data-outcome="decline"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Decline
+                              </button>
+                              <button
+                                class="result-btn edit"
+                                type="button"
+                                data-action="edit-debate"
+                                data-debate-id="${escapeHtml(debate.id)}"
+                                ${isBusy ? "disabled" : ""}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          `
+                      }
                     `
                     : `
                       ${renderResolveVideoField(debate)}
@@ -7165,6 +7179,15 @@
     `;
   }
 
+  function isActiveDebateEdit(debate) {
+    return Boolean(
+      state.currentPage === "debate" &&
+      state.debateEditMode &&
+      debate &&
+      String(debate.id || "").trim() === String(state.debateId || "").trim()
+    );
+  }
+
   function renderDebateDateEditForm(debate, options = {}) {
     if (!currentIsAdmin() || !debate) return "";
     const mobile = Boolean(options.mobile);
@@ -7366,28 +7389,6 @@
         ${renderDebateDetailsEditForm(debate, { mobile, hideActions: true })}
         ${renderDebateDateEditForm(debate, { mobile, hideActions: true })}
         ${renderDebateSaveAllButton(debate, { mobile })}
-        <div class="${actionsClassName} admin-review-actions debate-review-actions">
-          <button
-            class="result-btn win"
-            type="button"
-            data-action="review-submitted-debate"
-            data-debate-id="${escapeHtml(debate.id)}"
-            data-outcome="accept"
-            ${isBusy ? "disabled" : ""}
-          >
-            Accept
-          </button>
-          <button
-            class="result-btn reopen"
-            type="button"
-            data-action="review-submitted-debate"
-            data-debate-id="${escapeHtml(debate.id)}"
-            data-outcome="decline"
-            ${isBusy ? "disabled" : ""}
-          >
-            Decline
-          </button>
-        </div>
       `;
     } else if (debate.status === "scheduled") {
       content = `
