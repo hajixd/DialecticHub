@@ -2087,6 +2087,8 @@ textarea:focus {
 }
 
 .profile-history-panel {
+  position: relative;
+  z-index: 1;
   margin-top: 16px;
   padding: 18px;
   border: 1px solid var(--surface-divider);
@@ -2094,6 +2096,7 @@ textarea:focus {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(212, 176, 103, 0.05));
   display: grid;
   gap: 14px;
+  overflow: visible;
 }
 
 .profile-history-head {
@@ -2128,6 +2131,7 @@ textarea:focus {
 
 .profile-history-chart-shell {
   position: relative;
+  z-index: 1;
   min-width: 0;
   max-width: 820px;
   border: 1px solid var(--surface-divider);
@@ -2136,8 +2140,12 @@ textarea:focus {
     radial-gradient(circle at top, rgba(212, 176, 103, 0.1), transparent 58%),
     rgba(0, 0, 0, 0.08);
   padding: 14px 14px 10px;
-  overflow: hidden;
-  isolation: isolate;
+  overflow: visible;
+  isolation: auto;
+}
+
+.profile-history-chart-shell.is-tooltip-active {
+  z-index: 30;
 }
 
 .profile-history-chart {
@@ -2234,7 +2242,7 @@ textarea:focus {
   position: absolute;
   left: var(--profile-history-tooltip-x, 50%);
   top: var(--profile-history-tooltip-y, 50%);
-  z-index: 2;
+  z-index: 40;
   min-width: 148px;
   max-width: min(220px, calc(100% - 16px));
   padding: 10px 12px;

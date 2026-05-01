@@ -2236,14 +2236,6 @@
     return toMillis(debate?.scheduledFor) || toMillis(debate?.createdAt) || 0;
   }
 
-  function getFideRatingPeriodKey(millis) {
-    const safeMillis = Number(millis) || 0;
-    const date = new Date(safeMillis);
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-    return `${year}-${month}`;
-  }
-
   function getBirthYearForUid(uid) {
     const safeUid = String(uid || "").trim();
     if (!safeUid) return 0;
@@ -3427,19 +3419,12 @@
       })
       .sort(compareDebatesAscending);
 
-    const ratingPeriods = [];
-    let currentPeriod = null;
-
-    ratedDebates.forEach((debate) => {
+    const ratingPeriods = ratedDebates.map((debate, index) => {
       const debateMillis = getDebateChronologyMillis(debate);
-      const periodKey = getFideRatingPeriodKey(debateMillis);
-
-      if (!currentPeriod || currentPeriod.key !== periodKey) {
-        currentPeriod = { key: periodKey, debates: [] };
-        ratingPeriods.push(currentPeriod);
-      }
-
-      currentPeriod.debates.push({ debate, debateMillis });
+      return {
+        key: `${debateMillis || 0}-${String(debate?.id || index)}`,
+        debates: [{ debate, debateMillis }]
+      };
     });
 
     ratingPeriods.forEach((period) => {
@@ -6805,6 +6790,7 @@
     }
 
     tooltip.classList.add("is-visible");
+    chartRoot.classList.add("is-tooltip-active");
     return true;
   }
 
