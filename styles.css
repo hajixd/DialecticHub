@@ -2338,9 +2338,83 @@ textarea:focus {
   margin-top: 0;
 }
 
+.debate-save-all-actions {
+  display: flex;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.debate-save-all-btn {
+  width: 100%;
+  min-height: 48px;
+  font-size: 14px;
+}
+
 .admin-video-field input,
 .admin-video-field select {
   min-height: 40px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .section-header {
+  margin-bottom: 10px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-feed {
+  max-height: min(74vh, 900px);
+  padding-right: 4px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-list {
+  gap: 8px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review {
+  gap: 9px;
+  padding: 14px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .debate-topic {
+  margin: 0 0 4px;
+  font-size: 1.04rem;
+  line-height: 1.14;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .debate-subline {
+  font-size: 12px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .people-row,
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .detail-grid,
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .admin-control-stack {
+  gap: 8px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .people-row .person-badge,
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .people-row .mini-tag {
+  min-height: 30px;
+  padding: 0 12px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .detail-row {
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .detail-row strong {
+  font-size: 13px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .admin-inline-video {
+  max-width: 480px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .admin-review-actions {
+  gap: 8px;
+}
+
+body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .admin-review-actions .result-btn {
+  min-height: 40px;
+  font-size: 12px;
 }
 
 .admin-user-list {
@@ -3419,6 +3493,71 @@ html[data-theme="light"] body:not(.is-mobile-app) .archive-page .detail-row {
   }
 }
 
+@media (min-width: 981px) and (max-width: 1320px) {
+  body:not(.is-mobile-app) {
+    font-size: clamp(12.5px, 1.02vw, 14px);
+  }
+
+  body:not(.is-mobile-app) .workspace {
+    grid-template-columns: clamp(156px, 15vw, 196px) minmax(0, 1fr);
+    gap: clamp(10px, 1.1vw, 16px);
+    padding: clamp(9px, 1vw, 14px);
+  }
+
+  body:not(.is-mobile-app) .board {
+    grid-template-columns: minmax(0, 1fr) clamp(224px, 22vw, 300px);
+    gap: clamp(10px, 1.1vw, 16px);
+  }
+
+  body:not(.is-mobile-app) .main-content,
+  body:not(.is-mobile-app) .side-content,
+  body:not(.is-mobile-app) .page-shell {
+    gap: clamp(10px, 1.1vw, 16px);
+  }
+
+  body:not(.is-mobile-app) .page-hero,
+  body:not(.is-mobile-app) .section-panel,
+  body:not(.is-mobile-app) .side-section,
+  body:not(.is-mobile-app) .profile-card,
+  body:not(.is-mobile-app) .empty-state,
+  body:not(.is-mobile-app) .unauthorized-panel {
+    padding: clamp(14px, 1.35vw, 20px);
+  }
+
+  body:not(.is-mobile-app) .page-title {
+    font-size: clamp(1.85rem, 3.25vw, 3.45rem);
+  }
+
+  body:not(.is-mobile-app) .debate-card {
+    gap: clamp(10px, 1vw, 14px);
+    padding: clamp(14px, 1.3vw, 20px);
+  }
+
+  body:not(.is-mobile-app) .people-row .person-badge {
+    min-height: 32px;
+    padding: 0 clamp(12px, 1.25vw, 20px);
+  }
+
+  body:not(.is-mobile-app) .people-row .mini-tag {
+    min-height: 32px;
+    padding: 0 clamp(12px, 1.25vw, 18px);
+  }
+
+  body:not(.is-mobile-app) .detail-row {
+    padding: clamp(9px, 0.9vw, 12px);
+  }
+}
+
+@media (min-width: 981px) and (max-width: 1180px) {
+  body:not(.is-mobile-app) .board {
+    grid-template-columns: minmax(0, 1fr) clamp(208px, 22vw, 260px);
+  }
+
+  body:not(.is-mobile-app) .side-content {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .auth-screen,
   .workspace {
@@ -3503,10 +3642,11 @@ body.is-mobile-app {
   min-height: 0;
   overflow: hidden;
   overscroll-behavior-y: none;
-  --mobile-tab-safe-pad: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.2rem), 0.7rem);
+  --mobile-tab-safe-pad: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) * 0.22), 0.22rem);
+  --mobile-tabbar-lift: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.72rem), 1.05rem);
   --mobile-tabbar-height: 58px;
   --mobile-viewport-height: 100svh;
-  --mobile-content-height: calc(var(--mobile-viewport-height) - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad));
+  --mobile-content-height: calc(var(--mobile-viewport-height) - var(--mobile-tabbar-height) - var(--mobile-tab-safe-pad) - var(--mobile-tabbar-lift));
 }
 
 @supports (height: 100dvh) {
@@ -3597,7 +3737,7 @@ body.is-mobile-app {
   top: auto;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--mobile-tabbar-lift);
   z-index: 30;
   padding: 0.3rem 0 var(--mobile-tab-safe-pad);
   border-top: 1px solid var(--surface-divider);
@@ -4120,7 +4260,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   display: flex;
   gap: 14px;
   margin: 0 -2px;
-  padding: 2px 2px 14px;
+  padding: 14px 2px 14px;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
@@ -4213,10 +4353,24 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  padding-top: 4px;
+}
+
+.is-mobile-app .mobile-entry.is-admin-review .admin-inline-video {
+  margin-top: 8px;
 }
 
 .is-mobile-app .mobile-entry.is-admin-review .admin-review-actions {
   margin-top: auto;
+}
+
+.is-mobile-app .debate-save-all-actions {
+  margin-top: 0;
+}
+
+.is-mobile-app .debate-save-all-btn {
+  width: 100%;
+  min-height: 50px;
 }
 
 .is-mobile-app .mobile-list .mobile-entry:first-child,

@@ -4713,7 +4713,13 @@
     `;
   }
 
+  function getAwaitingResultsTitle(model) {
+    const count = Array.isArray(model?.unresolvedQueue) ? model.unresolvedQueue.length : 0;
+    return `Awaiting Results (${count})`;
+  }
+
   function renderMobileSettingsRoot(model) {
+    const awaitingResultsTitle = getAwaitingResultsTitle(model);
     const items = [
       {
         section: "profile",
@@ -4723,7 +4729,7 @@
       },
       {
         section: "awaiting",
-        title: "Awaiting Results",
+        title: awaitingResultsTitle,
         copy: currentIsAdmin()
           ? model.unresolvedQueue.length
             ? `${model.unresolvedQueue.length} debate${model.unresolvedQueue.length === 1 ? "" : "s"} waiting.`
@@ -4818,12 +4824,14 @@
   }
 
   function renderMobileAwaitingResultsPage(model) {
+    const awaitingResultsTitle = getAwaitingResultsTitle(model);
+
     return `
       <section class="page-shell mobile-page">
         <section class="mobile-block mobile-scroll-page-block mobile-review-page">
           <div class="mobile-settings-title mobile-review-title">
             <span class="page-kicker">Settings</span>
-            <h2 class="mobile-page-title">Awaiting Results</h2>
+            <h2 class="mobile-page-title">${escapeHtml(awaitingResultsTitle)}</h2>
           </div>
           ${renderScrollablePanel(
             renderMobileAdminReviewDeck(model.unresolvedQueue, {
@@ -5307,9 +5315,11 @@
   }
 
   function renderAdminPage(model) {
+    const awaitingResultsTitle = getAwaitingResultsTitle(model);
+
     if (!currentIsAdmin()) {
       return `
-        <section class="page-shell">
+        <section class="page-shell admin-page">
           <section class="page-hero">
             <div>
               <span class="page-kicker">Admin</span>
@@ -5320,7 +5330,7 @@
           <section class="section-panel is-disabled-panel" aria-disabled="true">
             <div class="section-header">
               <div>
-                <h3 class="section-title">Awaiting Results</h3>
+                <h3 class="section-title">${escapeHtml(awaitingResultsTitle)}</h3>
                 <p class="section-copy">Admin only</p>
               </div>
               <div class="section-actions">
@@ -5335,7 +5345,7 @@
       `;
     }
     return `
-      <section class="page-shell">
+      <section class="page-shell admin-page">
         <section class="page-hero">
           <div>
             <span class="page-kicker">Admin</span>
@@ -5343,10 +5353,10 @@
           </div>
         </section>
 
-        <section class="section-panel">
+        <section class="section-panel admin-awaiting-panel">
           <div class="section-header">
             <div>
-              <h3 class="section-title">Awaiting Results</h3>
+              <h3 class="section-title">${escapeHtml(awaitingResultsTitle)}</h3>
             </div>
           </div>
           ${renderScrollablePanel(
@@ -5355,7 +5365,7 @@
               emptyCopy: "",
               showAdminControls: true
             }),
-            "is-feed"
+            "is-feed admin-awaiting-feed"
           )}
         </section>
 
@@ -7032,11 +7042,12 @@
   function renderDebateDateEditForm(debate, options = {}) {
     if (!currentIsAdmin() || !debate) return "";
     const mobile = Boolean(options.mobile);
+    const hideActions = Boolean(options.hideActions);
     const safeDebateId = String(debate.id || "").trim();
-    const isBusy = state.actionBusyKey === `${safeDebateId}:date`;
+    const isBusy = safeDebateId && state.actionBusyKey.startsWith(`${safeDebateId}:`);
 
     return `
-      <form class="stack-form debate-date-edit-form${mobile ? " is-mobile" : ""}" id="debate-date-form">
+      <form class="stack-form debate-date-edit-form${mobile ? " is-mobile" : ""}" id="debate-date-form" ${hideActions ? 'data-save-mode="all"' : ""}>
         <input type="hidden" name="debateId" value="${escapeHtml(safeDebateId)}" />
         <label class="field">
           <span>Debate date and time</span>
@@ -7047,11 +7058,17 @@
             ${isBusy ? "disabled" : ""}
           />
         </label>
-        <div class="form-actions">
-          <button class="secondary-btn" type="submit" ${isBusy ? "disabled" : ""}>
-            ${isBusy ? "Saving..." : "Save Date"}
-          </button>
-        </div>
+        ${
+          hideActions
+            ? ""
+            : `
+              <div class="form-actions">
+                <button class="secondary-btn" type="submit" ${isBusy ? "disabled" : ""}>
+                  ${isBusy ? "Saving..." : "Save Date"}
+                </button>
+              </div>
+            `
+        }
       </form>
     `;
   }
@@ -7072,9 +7089,10 @@
     if (!currentIsAdmin() || !debate) return "";
 
     const mobile = Boolean(options.mobile);
+    const hideActions = Boolean(options.hideActions);
     const safeDebateId = String(debate.id || "").trim();
     const teamSize = getDebateTeamSize(debate, 1);
-    const isBusy = state.actionBusyKey === `${safeDebateId}:details`;
+    const isBusy = safeDebateId && state.actionBusyKey.startsWith(`${safeDebateId}:`);
 
     function renderParticipantField(field) {
       const meta = getDraftParticipantMeta(field);
@@ -7096,7 +7114,7 @@
     }
 
     return `
-      <form class="stack-form debate-details-edit-form${mobile ? " is-mobile" : ""}" id="debate-details-form">
+      <form class="stack-form debate-details-edit-form${mobile ? " is-mobile" : ""}" id="debate-details-form" ${hideActions ? 'data-save-mode="all"' : ""}>
         <input type="hidden" name="debateId" value="${escapeHtml(safeDebateId)}" />
         <label class="field">
           <span>Debate name</span>
@@ -7154,12 +7172,41 @@
             ${isBusy ? "disabled" : ""}
           />
         </label>
-        <div class="form-actions">
-          <button class="secondary-btn" type="submit" ${isBusy ? "disabled" : ""}>
-            ${isBusy ? "Saving..." : "Save Details"}
-          </button>
-        </div>
+        ${
+          hideActions
+            ? ""
+            : `
+              <div class="form-actions">
+                <button class="secondary-btn" type="submit" ${isBusy ? "disabled" : ""}>
+                  ${isBusy ? "Saving..." : "Save Details"}
+                </button>
+              </div>
+            `
+        }
       </form>
+    `;
+  }
+
+  function renderDebateSaveAllButton(debate, options = {}) {
+    if (!currentIsAdmin() || !debate) return "";
+
+    const mobile = Boolean(options.mobile);
+    const safeDebateId = String(debate.id || "").trim();
+    const isBusy = safeDebateId && state.actionBusyKey.startsWith(`${safeDebateId}:`);
+    const isSavingAll = state.actionBusyKey === `${safeDebateId}:all`;
+
+    return `
+      <div class="debate-save-all-actions${mobile ? " is-mobile" : ""}">
+        <button
+          class="primary-btn debate-save-all-btn"
+          type="button"
+          data-action="save-debate-all"
+          data-debate-id="${escapeHtml(safeDebateId)}"
+          ${isBusy ? "disabled" : ""}
+        >
+          ${isSavingAll ? "Saving..." : "Save All"}
+        </button>
+      </div>
     `;
   }
 
@@ -7189,8 +7236,9 @@
     let content = "";
     if (isAwaitingReview) {
       content = `
-        ${renderDebateDetailsEditForm(debate, { mobile })}
-        ${renderDebateDateEditForm(debate, { mobile })}
+        ${renderDebateDetailsEditForm(debate, { mobile, hideActions: true })}
+        ${renderDebateDateEditForm(debate, { mobile, hideActions: true })}
+        ${renderDebateSaveAllButton(debate, { mobile })}
         <div class="${actionsClassName} admin-review-actions">
           <button
             class="result-btn win"
@@ -7225,8 +7273,9 @@
       `;
     } else if (debate.status === "scheduled") {
       content = `
-        ${renderDebateDetailsEditForm(debate, { mobile })}
-        ${renderDebateDateEditForm(debate, { mobile })}
+        ${renderDebateDetailsEditForm(debate, { mobile, hideActions: true })}
+        ${renderDebateDateEditForm(debate, { mobile, hideActions: true })}
+        ${renderDebateSaveAllButton(debate, { mobile })}
         ${renderResolveVideoField(debate, mobile ? { mobile: true } : {})}
         <div class="${actionsClassName}">
           <button
@@ -7263,8 +7312,9 @@
       `;
     } else if (debate.status === "resolved") {
       content = `
-        ${renderDebateDetailsEditForm(debate, { mobile })}
-        ${renderDebateDateEditForm(debate, { mobile })}
+        ${renderDebateDetailsEditForm(debate, { mobile, hideActions: true })}
+        ${renderDebateDateEditForm(debate, { mobile, hideActions: true })}
+        ${renderDebateSaveAllButton(debate, { mobile })}
         <div class="${actionsClassName}">
           <button
             class="result-btn win"
@@ -7315,7 +7365,7 @@
     return `
       <section class="${shellClassName}">
         ${headingMarkup}
-        <div class="${stackClassName}" data-action="hold-admin-controls">
+        <div class="${stackClassName}" data-action="hold-admin-controls" data-debate-admin-tools="${escapeHtml(debate.id)}">
           ${content}
         </div>
       </section>
@@ -9438,13 +9488,195 @@
     }
   }
 
+  function createDebateEditValidationError(message) {
+    const error = new Error(message);
+    error.isDebateEditValidationError = true;
+    error.userMessage = message;
+    return error;
+  }
+
+  function getDebateEditErrorMessage(error, rulesAction, fallbackMessage) {
+    if (error?.isDebateEditValidationError && error.userMessage) {
+      return error.userMessage;
+    }
+
+    if (isFirestorePermissionDenied(error)) {
+      return getAdminRulesDeployMessage(rulesAction);
+    }
+
+    return fallbackMessage;
+  }
+
+  function buildDebateDatePatch(debate, formData, options = {}) {
+    const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
+    const scheduledDate = new Date(scheduledForRaw);
+    if (!scheduledForRaw || Number.isNaN(scheduledDate.getTime())) {
+      throw createDebateEditValidationError("Choose a valid debate date and time.");
+    }
+
+    if (!options.force && toMillis(debate?.scheduledFor) === scheduledDate.getTime()) {
+      return {};
+    }
+
+    return { scheduledFor: scheduledDate };
+  }
+
+  async function buildDebateDetailsPatch(debate, formData) {
+    const topic = String(formData.get("topic") || "").trim();
+    const category = normalizeDebateCategory(formData.get("category"), "");
+    const teamSize = normalizeDebateTeamSize(formData.get("teamSize"), 1);
+    const moderator = String(formData.get("moderator") || "").trim();
+    const activeFields = getActiveDraftParticipantFields(teamSize);
+
+    if (!topic) {
+      throw createDebateEditValidationError("Add a debate name before saving.");
+    }
+    if (!isValidDebateCategory(category)) {
+      throw createDebateEditValidationError("Choose a valid category.");
+    }
+
+    const participantNames = activeFields.map((field) => {
+      const name = normalizeUsername(formData.get(field) || "");
+      return { field, name };
+    });
+    const invalidParticipant = participantNames.find((entry) => !isValidUsername(entry.name));
+    if (invalidParticipant) {
+      throw createDebateEditValidationError("Every active debater needs a 3-20 character username.");
+    }
+
+    const uniqueNames = new Set(participantNames.map((entry) => entry.name));
+    if (uniqueNames.size !== participantNames.length) {
+      throw createDebateEditValidationError("Each debater slot needs a different person.");
+    }
+
+    const patch = {};
+    const currentTeamSize = getDebateTeamSize(debate, 1);
+
+    if (String(debate.topic || "").trim() !== topic) {
+      patch.topic = topic;
+    }
+    if (normalizeDebateCategory(debate.category) !== category) {
+      patch.category = category;
+    }
+    if (currentTeamSize !== teamSize) {
+      patch.teamSize = teamSize;
+    }
+    if (String(debate.moderator || "").trim() !== moderator) {
+      patch.moderator = moderator;
+    }
+
+    for (const entry of participantNames) {
+      const meta = getDraftParticipantMeta(entry.field);
+      if (!meta) continue;
+
+      const currentUid = String(debate[meta.field] || "").trim();
+      const currentName = getDebateParticipantEditValue(debate, meta.field);
+      const shouldResolveIdentity = currentTeamSize !== teamSize || currentName !== entry.name || !currentUid;
+      if (!shouldResolveIdentity) continue;
+
+      const identity = await ensureReservedUsername(entry.name);
+      const nextUid = String(identity?.uid || "").trim();
+      const nextName = normalizeUsername(identity?.username || entry.name);
+      if (!nextUid || !nextName) {
+        throw createDebateEditValidationError("Could not resolve one of those debaters.");
+      }
+
+      if (currentUid !== nextUid) {
+        patch[meta.field] = nextUid;
+      }
+      if (normalizeUsername(debate[meta.nameField] || "") !== nextName) {
+        patch[meta.nameField] = nextName;
+      }
+    }
+
+    const nextDebate = { ...debate, ...patch };
+    if (nextDebate.status === "resolved" && (nextDebate.result === "a" || nextDebate.result === "b")) {
+      const { winnerUid, winnerName } = buildResolvedWinnerMeta(
+        getDebateTeamSize(nextDebate, 1),
+        nextDebate.result,
+        getDebateTeamParticipants(nextDebate, "a"),
+        getDebateTeamParticipants(nextDebate, "b")
+      );
+      if (String(nextDebate.winnerUid || "").trim() !== winnerUid) {
+        patch.winnerUid = winnerUid;
+      }
+      if (normalizeUsername(nextDebate.winnerName || "") !== normalizeUsername(winnerName || "")) {
+        patch.winnerName = winnerName;
+      }
+    }
+
+    return patch;
+  }
+
+  function getDebateEditForms(debateId, root = null) {
+    const safeDebateId = String(debateId || "").trim();
+    const searchRoot = root instanceof Element ? root : el.mainContent;
+    const forms = {
+      detailsForm: null,
+      dateForm: null
+    };
+
+    if (!safeDebateId || !searchRoot) {
+      return forms;
+    }
+
+    const matchesDebate = (form) => {
+      if (!(form instanceof HTMLFormElement)) return false;
+      const formData = new FormData(form);
+      return String(formData.get("debateId") || "").trim() === safeDebateId;
+    };
+
+    const detailsForm = searchRoot.querySelector("#debate-details-form");
+    const dateForm = searchRoot.querySelector("#debate-date-form");
+    forms.detailsForm = matchesDebate(detailsForm) ? detailsForm : null;
+    forms.dateForm = matchesDebate(dateForm) ? dateForm : null;
+
+    if (!forms.detailsForm || !forms.dateForm) {
+      const allDetailsForms = Array.from(el.mainContent?.querySelectorAll("#debate-details-form") || []);
+      const allDateForms = Array.from(el.mainContent?.querySelectorAll("#debate-date-form") || []);
+      forms.detailsForm = forms.detailsForm || allDetailsForms.find(matchesDebate) || null;
+      forms.dateForm = forms.dateForm || allDateForms.find(matchesDebate) || null;
+    }
+
+    return forms;
+  }
+
+  function serializeDebatePatchForFirestore(patch) {
+    const payload = { ...patch };
+    if (payload.scheduledFor instanceof Date) {
+      payload.scheduledFor = firebase.firestore.Timestamp.fromDate(payload.scheduledFor);
+    }
+    return payload;
+  }
+
+  async function saveDebatePatch(debateId, patch) {
+    if (!Object.keys(patch).length) return false;
+
+    if (isPreviewMode()) {
+      state.debates = state.debates.map((entry) => {
+        if (entry.id !== debateId) return entry;
+        return {
+          ...entry,
+          ...patch,
+          updatedAt: new Date()
+        };
+      });
+    } else {
+      await db.collection("debates").doc(debateId).update({
+        ...serializeDebatePatchForFirestore(patch),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    return true;
+  }
+
   async function handleDebateDateSubmit(event) {
     event.preventDefault();
     if (!state.user) return;
 
     const formData = new FormData(event.target);
     const debateId = String(formData.get("debateId") || "").trim();
-    const scheduledForRaw = String(formData.get("scheduledFor") || "").trim();
     const debate = state.debates.find((entry) => entry.id === debateId);
 
     if (!debate || !currentIsAdmin()) {
@@ -9452,9 +9684,11 @@
       return;
     }
 
-    const scheduledDate = new Date(scheduledForRaw);
-    if (!scheduledForRaw || Number.isNaN(scheduledDate.getTime())) {
-      showToast("Choose a valid debate date and time.", "error");
+    let patch = {};
+    try {
+      patch = buildDebateDatePatch(debate, formData, { force: true });
+    } catch (error) {
+      showToast(getDebateEditErrorMessage(error, "changing debate dates", "Could not update that debate date right now."), "error");
       return;
     }
 
@@ -9462,29 +9696,11 @@
     renderApp({ preserveScroll: true });
 
     try {
-      if (isPreviewMode()) {
-        state.debates = state.debates.map((entry) => {
-          if (entry.id !== debateId) return entry;
-          return {
-            ...entry,
-            scheduledFor: scheduledDate,
-            updatedAt: new Date()
-          };
-        });
-      } else {
-        await db.collection("debates").doc(debateId).update({
-          scheduledFor: firebase.firestore.Timestamp.fromDate(scheduledDate),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-      }
-
+      await saveDebatePatch(debateId, patch);
       showToast("Debate date updated.", "success");
     } catch (error) {
       console.warn("Could not update debate date", error);
-      const message = isFirestorePermissionDenied(error)
-        ? getAdminRulesDeployMessage("changing debate dates")
-        : "Could not update that debate date right now.";
-      showToast(message, "error");
+      showToast(getDebateEditErrorMessage(error, "changing debate dates", "Could not update that debate date right now."), "error");
     } finally {
       state.actionBusyKey = "";
       renderApp({ preserveScroll: true });
@@ -9522,129 +9738,86 @@
       return;
     }
 
-    const topic = String(formData.get("topic") || "").trim();
-    const category = normalizeDebateCategory(formData.get("category"), "");
-    const teamSize = normalizeDebateTeamSize(formData.get("teamSize"), 1);
-    const moderator = String(formData.get("moderator") || "").trim();
-    const activeFields = getActiveDraftParticipantFields(teamSize);
-
-    if (!topic) {
-      showToast("Add a debate name before saving.", "error");
-      return;
-    }
-    if (!isValidDebateCategory(category)) {
-      showToast("Choose a valid category.", "error");
+    let patch = {};
+    try {
+      patch = await buildDebateDetailsPatch(debate, formData);
+    } catch (error) {
+      showToast(getDebateEditErrorMessage(error, "editing debates", "Could not update those debate details right now."), "error");
       return;
     }
 
-    const participantNames = activeFields.map((field) => {
-      const name = normalizeUsername(formData.get(field) || "");
-      return { field, name };
-    });
-    const invalidParticipant = participantNames.find((entry) => !isValidUsername(entry.name));
-    if (invalidParticipant) {
-      showToast("Every active debater needs a 3-20 character username.", "error");
-      return;
-    }
-
-    const uniqueNames = new Set(participantNames.map((entry) => entry.name));
-    if (uniqueNames.size !== participantNames.length) {
-      showToast("Each debater slot needs a different person.", "error");
+    if (!Object.keys(patch).length) {
+      showToast("No debate details changed.", "success");
       return;
     }
 
     state.actionBusyKey = `${debateId}:details`;
     renderApp({ preserveScroll: true });
-
     try {
-      const patch = {};
-      const currentTeamSize = getDebateTeamSize(debate, 1);
-
-      if (String(debate.topic || "").trim() !== topic) {
-        patch.topic = topic;
-      }
-      if (normalizeDebateCategory(debate.category) !== category) {
-        patch.category = category;
-      }
-      if (currentTeamSize !== teamSize) {
-        patch.teamSize = teamSize;
-      }
-      if (String(debate.moderator || "").trim() !== moderator) {
-        patch.moderator = moderator;
-      }
-
-      for (const entry of participantNames) {
-        const meta = getDraftParticipantMeta(entry.field);
-        if (!meta) continue;
-
-        const currentUid = String(debate[meta.field] || "").trim();
-        const currentName = getDebateParticipantEditValue(debate, meta.field);
-        const shouldResolveIdentity = currentTeamSize !== teamSize || currentName !== entry.name || !currentUid;
-        if (!shouldResolveIdentity) continue;
-
-        const identity = await ensureReservedUsername(entry.name);
-        const nextUid = String(identity?.uid || "").trim();
-        const nextName = normalizeUsername(identity?.username || entry.name);
-        if (!nextUid || !nextName) {
-          throw new Error("INVALID_DEBATER");
-        }
-
-        if (currentUid !== nextUid) {
-          patch[meta.field] = nextUid;
-        }
-        if (normalizeUsername(debate[meta.nameField] || "") !== nextName) {
-          patch[meta.nameField] = nextName;
-        }
-      }
-
-      const nextDebate = { ...debate, ...patch };
-      if (nextDebate.status === "resolved" && (nextDebate.result === "a" || nextDebate.result === "b")) {
-        const { winnerUid, winnerName } = buildResolvedWinnerMeta(
-          getDebateTeamSize(nextDebate, 1),
-          nextDebate.result,
-          getDebateTeamParticipants(nextDebate, "a"),
-          getDebateTeamParticipants(nextDebate, "b")
-        );
-        if (String(nextDebate.winnerUid || "").trim() !== winnerUid) {
-          patch.winnerUid = winnerUid;
-        }
-        if (normalizeUsername(nextDebate.winnerName || "") !== normalizeUsername(winnerName || "")) {
-          patch.winnerName = winnerName;
-        }
-      }
-
-      if (!Object.keys(patch).length) {
-        showToast("No debate details changed.", "success");
-        return;
-      }
-
-      if (isPreviewMode()) {
-        state.debates = state.debates.map((entry) => {
-          if (entry.id !== debateId) return entry;
-          return {
-            ...entry,
-            ...patch,
-            updatedAt: new Date()
-          };
-        });
-      } else {
-        await db.collection("debates").doc(debateId).update({
-          ...patch,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-      }
-
+      await saveDebatePatch(debateId, patch);
       showToast("Debate details updated.", "success");
     } catch (error) {
       console.warn("Could not update debate details", error);
-      const message = isFirestorePermissionDenied(error)
-        ? getAdminRulesDeployMessage("editing debates")
-        : "Could not update those debate details right now.";
-      showToast(message, "error");
+      showToast(getDebateEditErrorMessage(error, "editing debates", "Could not update those debate details right now."), "error");
     } finally {
       state.actionBusyKey = "";
       renderApp({ preserveScroll: true });
     }
+  }
+
+  async function handleDebateAllSave(debateId, root = null) {
+    if (!state.user || !currentIsAdmin()) return;
+
+    const safeDebateId = String(debateId || "").trim();
+    const debate = state.debates.find((entry) => entry.id === safeDebateId);
+    if (!debate) {
+      showToast("Could not find that debate.", "error");
+      return;
+    }
+
+    const { detailsForm, dateForm } = getDebateEditForms(safeDebateId, root);
+    if (!detailsForm || !dateForm) {
+      showToast("Could not find all of the debate edit fields.", "error");
+      return;
+    }
+
+    let patch = {};
+    try {
+      const datePatch = buildDebateDatePatch(debate, new FormData(dateForm));
+      const detailsPatch = await buildDebateDetailsPatch(debate, new FormData(detailsForm));
+      patch = { ...datePatch, ...detailsPatch };
+    } catch (error) {
+      showToast(getDebateEditErrorMessage(error, "editing debates", "Could not save those debate changes right now."), "error");
+      return;
+    }
+
+    if (!Object.keys(patch).length) {
+      showToast("No debate changes to save.", "success");
+      return;
+    }
+
+    state.actionBusyKey = `${safeDebateId}:all`;
+    renderApp({ preserveScroll: true });
+
+    try {
+      await saveDebatePatch(safeDebateId, patch);
+      showToast("Debate updated.", "success");
+    } catch (error) {
+      console.warn("Could not save debate changes", error);
+      showToast(getDebateEditErrorMessage(error, "editing debates", "Could not save those debate changes right now."), "error");
+    } finally {
+      state.actionBusyKey = "";
+      renderApp({ preserveScroll: true });
+    }
+  }
+
+  function handleDebateAllSubmit(event) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    handleDebateAllSave(
+      String(formData.get("debateId") || "").trim(),
+      event.target.closest("[data-debate-admin-tools]")
+    );
   }
 
   function getResolveVideoInputValue(debateId) {
@@ -10014,6 +10187,15 @@
       event.preventDefault();
       const debateId = actionButton.getAttribute("data-debate-id");
       claimDebateResult(debateId, actionButton.getAttribute("data-outcome"), getResolveVideoSettings(debateId));
+      return;
+    }
+
+    if (action === "save-debate-all") {
+      event.preventDefault();
+      handleDebateAllSave(
+        actionButton.getAttribute("data-debate-id"),
+        actionButton.closest("[data-debate-admin-tools]")
+      );
       return;
     }
 
@@ -10507,9 +10689,17 @@
       } else if (event.target && event.target.id === "lazy-debate-form") {
         handleLazyDebateSubmit(event);
       } else if (event.target && event.target.id === "debate-details-form") {
-        handleDebateDetailsSubmit(event);
+        if (event.target.getAttribute("data-save-mode") === "all") {
+          handleDebateAllSubmit(event);
+        } else {
+          handleDebateDetailsSubmit(event);
+        }
       } else if (event.target && event.target.id === "debate-date-form") {
-        handleDebateDateSubmit(event);
+        if (event.target.getAttribute("data-save-mode") === "all") {
+          handleDebateAllSubmit(event);
+        } else {
+          handleDebateDateSubmit(event);
+        }
       } else if (event.target && event.target.id === "debate-comment-form") {
         handleDebateCommentSubmit(event);
       } else if (event.target && event.target.id === "debate-video-form") {
