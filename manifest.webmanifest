@@ -1,6 +1,6 @@
 {
-  "name": "DH",
-  "short_name": "DH",
+  "name": "DialecticHub",
+  "short_name": "DialecticHub",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0b0e12",

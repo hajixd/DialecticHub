@@ -102,6 +102,7 @@
     profilePictureTargetUid: "",
     profilePictureTargetName: "",
     actionBusyKey: "",
+    reviewRenderDeferred: false,
     openSelectKey: "",
     accountModalOpen: false,
     accountModalType: "",
@@ -559,7 +560,7 @@
   }
 
   function showAuthScreen() {
-    document.body.classList.toggle("is-mobile-app", isMobileViewport());
+    syncViewportBodyClasses();
     document.body.classList.remove("booting");
     el.hubShell?.classList.add("hidden");
     el.authScreen?.classList.remove("hidden");
@@ -571,7 +572,7 @@
   }
 
   function showHubShell() {
-    document.body.classList.toggle("is-mobile-app", isMobileViewport());
+    syncViewportBodyClasses();
     document.body.classList.remove("booting");
     el.authScreen?.classList.add("hidden");
     el.hubShell?.classList.remove("hidden");
@@ -1110,6 +1111,22 @@
     } catch (_) {
       return window.innerWidth <= 860;
     }
+  }
+
+  function isStandaloneDisplayMode() {
+    try {
+      return Boolean(
+        (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+        window.navigator?.standalone
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function syncViewportBodyClasses(mobileViewport = isMobileViewport()) {
+    document.body.classList.toggle("is-mobile-app", mobileViewport);
+    document.body.classList.toggle("is-standalone-app", isStandaloneDisplayMode());
   }
 
   function getPageFromUrl() {
@@ -3139,6 +3156,7 @@
     state.unsubDebates = db.collection("debates").orderBy("scheduledFor", "asc").onSnapshot(
       (snapshot) => {
         state.debates = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+        if (state.reviewRenderDeferred) return;
         renderApp({ preserveScroll: true });
       },
       (error) => {
@@ -3746,9 +3764,24 @@
     };
   }
 
+  function getScrollNodeKey(node) {
+    if (!(node instanceof HTMLElement)) return "";
+
+    const explicitKey = String(node.getAttribute("data-scroll-key") || "").trim();
+    if (explicitKey) return explicitKey;
+    if (node.classList.contains("mobile-review-rail")) return "mobile-review-rail";
+    if (node.classList.contains("admin-awaiting-feed")) return "admin-awaiting-feed";
+    return "";
+  }
+
+  function getScrollableNodes() {
+    return [...document.querySelectorAll(".panel-scroll, .mobile-review-rail")];
+  }
+
   function capturePanelScrollState() {
-    return [...document.querySelectorAll(".panel-scroll")].map((node, index) => ({
+    return getScrollableNodes().map((node, index) => ({
       index,
+      key: getScrollNodeKey(node),
       classNames: String(node.className || "")
         .split(/\s+/)
         .filter(Boolean),
@@ -3761,9 +3794,15 @@
     const states = Array.isArray(savedState) ? savedState : [];
     if (!states.length) return;
 
-    const nodes = [...document.querySelectorAll(".panel-scroll")];
+    const nodes = getScrollableNodes();
+    const keyedNodes = new Map(
+      nodes
+        .map((node) => [getScrollNodeKey(node), node])
+        .filter(([key]) => Boolean(key))
+    );
     states.forEach((entry) => {
-      const node = nodes[Number(entry?.index)];
+      const key = String(entry?.key || "").trim();
+      const node = key ? keyedNodes.get(key) : nodes[Number(entry?.index)];
       if (!(node instanceof HTMLElement)) return;
 
       const requiredClasses = Array.isArray(entry?.classNames) ? entry.classNames.filter(Boolean) : [];
@@ -3783,7 +3822,7 @@
     const panelScrollState = preserveScroll ? capturePanelScrollState() : [];
     const mobileViewport = isMobileViewport();
     state.isMobileViewport = mobileViewport;
-    document.body.classList.toggle("is-mobile-app", mobileViewport);
+    syncViewportBodyClasses(mobileViewport);
     syncThemeUi();
 
     if (!state.user) {
@@ -4012,7 +4051,7 @@
     const statusClassName = options.fullWidthStatus || isAdminReviewCard ? "status-chip-wide" : "";
 
     return `
-      <article class="mobile-entry${isAdminReviewCard ? " is-admin-review" : ""}">
+      <article class="mobile-entry${isAdminReviewCard ? " is-admin-review" : ""}"${isAdminReviewCard ? ` data-review-card="${escapeHtml(debate.id)}"` : ""}>
         <button
           class="mobile-list-row debate-card-link"
           type="button"
@@ -4136,7 +4175,7 @@
 
     return `
       <div class="mobile-review-deck">
-        <div class="mobile-review-rail" aria-label="Awaiting debate review cards">
+        <div class="mobile-review-rail" aria-label="Awaiting debate review cards" data-scroll-key="mobile-review-rail">
           ${list
             .map((debate, index) => {
               return `
@@ -5593,8 +5632,11 @@
 
   function renderScrollablePanel(content, className = "") {
     const classes = ["panel-scroll", className].filter(Boolean).join(" ");
+    const scrollKey = String(className || "").split(/\s+/).includes("admin-awaiting-feed")
+      ? "admin-awaiting-feed"
+      : "";
     return `
-      <div class="${classes}">
+      <div class="${classes}"${scrollKey ? ` data-scroll-key="${escapeHtml(scrollKey)}"` : ""}>
         ${content}
       </div>
     `;
@@ -5808,6 +5850,7 @@
         class="debate-card debate-card-link${isAwaitingReview ? " is-admin-review" : ""}"
         data-action="open-debate"
         data-debate-id="${escapeHtml(debate.id)}"
+        ${isAwaitingReview ? `data-review-card="${escapeHtml(debate.id)}"` : ""}
         role="button"
         tabindex="0"
       >
@@ -9861,22 +9904,61 @@
     };
   }
 
-  async function reviewSubmittedDebate(debateId, outcome) {
-    if (!currentIsAdmin() || !state.user || !debateId || !["accept", "decline"].includes(String(outcome || ""))) return;
+  function waitForMs(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+  }
+
+  function prefersReducedMotion() {
+    try {
+      return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getReviewCardFromTrigger(triggerNode) {
+    if (!(triggerNode instanceof Element)) return null;
+    return triggerNode.closest("[data-review-card]");
+  }
+
+  async function playReviewDecisionAnimation(triggerNode, outcome) {
+    const card = getReviewCardFromTrigger(triggerNode);
+    if (!(card instanceof HTMLElement)) return;
+
+    const safeOutcome = outcome === "decline" ? "decline" : "accept";
+    card.style.setProperty("--review-card-height", `${Math.ceil(card.getBoundingClientRect().height)}px`);
+    card.classList.remove("is-review-accept", "is-review-decline");
+    card.classList.add("is-reviewing", `is-review-${safeOutcome}`);
+    card.setAttribute("aria-busy", "true");
+    card.querySelectorAll("button, input, select, textarea").forEach((node) => {
+      if (node instanceof HTMLButtonElement || node instanceof HTMLInputElement || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) {
+        node.disabled = true;
+      }
+    });
+
+    await waitForMs(prefersReducedMotion() ? 80 : 360);
+  }
+
+  async function reviewSubmittedDebate(debateId, outcome, triggerNode = null) {
+    const safeOutcome = String(outcome || "").trim();
+    if (!currentIsAdmin() || !state.user || !debateId || !["accept", "decline"].includes(safeOutcome)) return;
+    if (state.actionBusyKey.startsWith(`${debateId}:review:`)) return;
 
     const debate = state.debates.find((entry) => entry.id === debateId);
     if (!isDebateAwaitingReview(debate)) return;
 
-    state.actionBusyKey = `${debateId}:review:${outcome}`;
-    renderApp({ preserveScroll: true });
+    state.actionBusyKey = `${debateId}:review:${safeOutcome}`;
+    state.reviewRenderDeferred = true;
+    const animationPromise = playReviewDecisionAnimation(triggerNode, safeOutcome);
 
     try {
-      if (outcome === "decline") {
+      if (safeOutcome === "decline") {
         if (isPreviewMode()) {
           state.debates = state.debates.filter((entry) => entry.id !== debateId);
         } else {
           await db.collection("debates").doc(debateId).delete();
         }
+        await animationPromise;
         showToast("Debate submission declined.", "success");
         return;
       }
@@ -9914,6 +9996,7 @@
         });
       }
 
+      await animationPromise;
       showToast("Debate approved.", "success");
     } catch (error) {
       console.warn("Could not review submitted debate", error);
@@ -9923,6 +10006,7 @@
       showToast(message, "error");
     } finally {
       state.actionBusyKey = "";
+      state.reviewRenderDeferred = false;
       renderApp({ preserveScroll: true });
     }
   }
@@ -10203,7 +10287,8 @@
       event.preventDefault();
       reviewSubmittedDebate(
         actionButton.getAttribute("data-debate-id"),
-        actionButton.getAttribute("data-outcome")
+        actionButton.getAttribute("data-outcome"),
+        actionButton
       );
       return;
     }
