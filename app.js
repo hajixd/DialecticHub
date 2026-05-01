@@ -194,6 +194,7 @@
     adminNavLink: document.getElementById("admin-nav-link"),
     headerRankedCount: document.getElementById("header-ranked-count"),
     headerUpcomingCount: document.getElementById("header-upcoming-count"),
+    headerDebateCount: document.getElementById("header-debate-count"),
     themeColorMeta: document.querySelector('meta[name="theme-color"]'),
     toastStack: document.getElementById("toast-stack")
   };
@@ -3635,6 +3636,7 @@
 
   function buildViewModel() {
     const allDebates = [...state.debates].sort(compareDebatesAscending);
+    const approvedDebateCount = allDebates.filter((debate) => !isDebateAwaitingReview(debate)).length;
     const filteredDebates = allDebates.filter((debate) => debateMatchesSearch(debate, state.searchTerm));
     const upcoming = filteredDebates.filter((debate) => debate.status === "scheduled" && toMillis(debate.scheduledFor) >= Date.now());
     const overdue = filteredDebates.filter((debate) => debate.status === "scheduled" && toMillis(debate.scheduledFor) < Date.now());
@@ -3707,6 +3709,7 @@
 
     return {
       totalDebaters: state.directory.length,
+      approvedDebateCount,
       upcoming,
       overdue,
       past,
@@ -3850,6 +3853,10 @@
     }
     if (el.headerRankedCount) el.headerRankedCount.textContent = model.myRank > 0 ? String(model.myRank) : "—";
     if (el.headerUpcomingCount) el.headerUpcomingCount.textContent = String(model.upcoming.length);
+    if (el.headerDebateCount) {
+      const debateCount = Math.max(0, Number(model.approvedDebateCount || 0));
+      el.headerDebateCount.textContent = `${debateCount} ${debateCount === 1 ? "debate" : "debates"}`;
+    }
     const activeNavPage =
       state.currentPage === "debate"
         ? model.selectedDebateSourcePage || (mobileViewport ? "search" : "dashboard")
