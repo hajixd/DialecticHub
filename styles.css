@@ -2949,6 +2949,15 @@ html[data-theme="light"] body:not(.is-mobile-app) .archive-page .detail-row {
   border: 0;
 }
 
+.admin-inline-video {
+  width: 100%;
+  max-width: 640px;
+}
+
+.mobile-admin-stack .admin-inline-video {
+  max-width: none;
+}
+
 .comment-list {
   display: grid;
   gap: 10px;

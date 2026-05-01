@@ -1694,6 +1694,26 @@
     }
   }
 
+  function renderAdminQueueVideoEmbed(debate, options = {}) {
+    const embedUrl = getYouTubeEmbedUrl(debate?.videoUrl || debate?.videoEmbedUrl || "", {
+      startSeconds: debate?.videoClipStart,
+      endSeconds: debate?.videoClipEnd
+    });
+    if (!embedUrl) return "";
+
+    return `
+      <div class="video-frame-shell admin-inline-video${options.mobile ? " is-mobile" : ""}" data-action="hold-admin-controls">
+        <iframe
+          src="${escapeHtml(embedUrl)}"
+          title="${escapeHtml(debate?.topic || "Debate video")}"
+          loading="lazy"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowfullscreen
+        ></iframe>
+      </div>
+    `;
+  }
+
   function canEditDebateVideo(debate) {
     if (!debate || debate.status !== "resolved" || !state.user) return false;
     const resolverUid = String(debate.claimedByUid || "").trim();
@@ -4003,6 +4023,7 @@
                   isAwaitingReview
                     ? `
                       <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
+                      ${renderAdminQueueVideoEmbed(debate, { mobile: true })}
                       <div class="mobile-admin-actions">
                         <button
                           class="result-btn win"
@@ -5754,6 +5775,7 @@
                 ${
                   isAwaitingReview
                     ? `
+                      ${renderAdminQueueVideoEmbed(debate)}
                       <div class="admin-actions">
                         <button
                           class="result-btn win"
