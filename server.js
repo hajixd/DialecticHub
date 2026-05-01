@@ -36,7 +36,12 @@ const blockedPatterns = [
 
 function resolveRequestedPath(requestUrl) {
   const parsed = new URL(requestUrl, `http://127.0.0.1:${port}`);
-  const pathname = decodeURIComponent(parsed.pathname);
+  let pathname = "";
+  try {
+    pathname = decodeURIComponent(parsed.pathname);
+  } catch (_) {
+    return null;
+  }
   const target = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const normalizedTarget = target.replace(/\\/g, "/");
 
@@ -45,7 +50,8 @@ function resolveRequestedPath(requestUrl) {
   }
 
   const fullPath = path.normalize(path.join(rootDir, target));
-  if (!fullPath.startsWith(rootDir)) {
+  const relativePath = path.relative(rootDir, fullPath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     return null;
   }
 

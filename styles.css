@@ -1210,10 +1210,13 @@ textarea:focus {
 }
 
 .search-field input {
+  min-height: 32px;
+  width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
   box-shadow: none;
+  line-height: 1.35;
 }
 
 .search-field input:focus {
@@ -2760,6 +2763,23 @@ body:not(.is-mobile-app) .admin-awaiting-panel .debate-card.is-admin-review .adm
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .loading-rings span,
+  .page-shell,
+  .is-mobile-app .mobile-review-slide {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+
+  .auth-loading-screen,
+  .auth-loading-mark,
+  .profile-link,
+  .custom-select-trigger,
+  .custom-select-caret,
+  .result-btn,
+  .mobile-entry {
+    transition-duration: 1ms;
+  }
+
   [data-review-card].is-reviewing,
   [data-review-card].is-reviewing::after,
   .is-mobile-app .mobile-review-slide.is-review-slide-exiting {
@@ -2895,6 +2915,14 @@ body:not(.is-mobile-app) .schedule-page > .section-panel {
   transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
+.profile-link:not(.person-badge) {
+  min-width: 44px;
+  min-height: 32px;
+  padding: 4px;
+  margin: -4px;
+  border-radius: var(--radius-sm);
+}
+
 .profile-link-inner {
   display: inline-flex;
   align-items: center;
@@ -2908,6 +2936,10 @@ body:not(.is-mobile-app) .schedule-page > .section-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.profile-link:not(.person-badge) .profile-link-label {
+  min-width: fit-content;
 }
 
 .profile-avatar {
@@ -3998,6 +4030,10 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   min-height: 48px;
 }
 
+.is-mobile-app .search-field input {
+  min-height: 40px;
+}
+
 .is-mobile-app .mobile-search-results {
   position: static;
   top: auto;
@@ -4375,7 +4411,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 }
 
 .is-mobile-app .archive-edit-btn-mobile {
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 12px;
 }
 
@@ -4595,6 +4631,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 .is-mobile-app .mobile-row-people .person-badge {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 40px;
   justify-content: flex-start;
   padding: 0 12px;
 }
@@ -4688,6 +4725,7 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 
 .is-mobile-app .mobile-debate-people .person-badge {
   min-width: 0;
+  min-height: 40px;
   width: 100%;
   padding: 0 14px;
 }
@@ -4704,6 +4742,10 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 
 .is-mobile-app .mobile-stat strong .profile-identity-inline {
   max-width: 100%;
+}
+
+.is-mobile-app .mobile-stat strong .profile-link-label {
+  line-height: 1.15;
 }
 
 .is-mobile-app .mobile-debate-people .mini-tag {

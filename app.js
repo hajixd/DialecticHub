@@ -6586,6 +6586,7 @@
     const paddingRight = 24;
     const paddingBottom = 46;
     const paddingLeft = 54;
+    const chartHitRadius = isMobileViewport() ? 52 : 20;
     const innerWidth = chartWidth - paddingLeft - paddingRight;
     const innerHeight = chartHeight - paddingTop - paddingBottom;
     const ratingValues = safeHistory.map((point) => roundHalfAwayFromZero(point.ratingRounded ?? point.rating));
@@ -6717,11 +6718,11 @@
                     class="profile-history-hit-area"
                     cx="${point.x}"
                     cy="${point.y}"
-                    r="18"
+                    r="${chartHitRadius}"
                     tabindex="0"
                     focusable="true"
                     role="button"
-                    aria-label="${escapeHtml(`${formatRelativeStamp(point.at)} — ${point.displayRating}`)}"
+                    aria-label="${escapeHtml(`${formatRelativeStamp(point.at)} - ${point.displayRating}`)}"
                     data-chart-point-index="${index}"
                     data-chart-ratio-x="${(point.x / chartWidth).toFixed(6)}"
                     data-chart-ratio-y="${(point.y / chartHeight).toFixed(6)}"
