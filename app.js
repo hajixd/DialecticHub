@@ -38,10 +38,10 @@
   const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1100;
   const MIN_RANKED_DEBATES = 3;
-  const PLACEMENT_GAME_WEIGHT = 5;
-  const DEBATE_ELO_CHANGE_MULTIPLIER = 6;
-  const DEBATE_ELO_EXPECTED_SCORE_SCALE = 50;
-  const DEBATE_ELO_EXPECTED_SCORE_CAP = 1200;
+  const PLACEMENT_GAME_WEIGHT = 3;
+  const DEBATE_ELO_CHANGE_MULTIPLIER = 3;
+  const DEBATE_ELO_EXPECTED_SCORE_SCALE = 250;
+  const DEBATE_ELO_EXPECTED_SCORE_CAP = 1000;
   const FIDE_NEW_PLAYER_K = 40;
   const FIDE_STANDARD_K = 20;
   const FIDE_MASTER_K = 10;
