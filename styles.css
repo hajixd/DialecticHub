@@ -633,6 +633,17 @@ html[data-theme="light"] .avatar-chip {
   overflow: hidden;
 }
 
+.debate-participant-edit-select .custom-select-menu {
+  position: static;
+  margin-top: 6px;
+}
+
+.debate-details-edit-form,
+.debate-details-edit-form .debate-team-card,
+.debate-details-edit-form .debate-team-fields {
+  overflow: visible;
+}
+
 .custom-select-search-shell {
   padding: 2px;
 }

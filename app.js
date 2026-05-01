@@ -7241,6 +7241,96 @@
     );
   }
 
+  function getDebateEditParticipantSelectKey(debateId, field) {
+    const safeDebateId = String(debateId || "").trim();
+    const safeField = String(field || "").trim();
+    return safeDebateId && safeField ? `debate-edit:${safeDebateId}:${safeField}` : "";
+  }
+
+  function renderDebateParticipantEditField(debate, field, options = {}) {
+    const meta = getDraftParticipantMeta(field);
+    if (!meta) return "";
+
+    const safeDebateId = String(debate?.id || "").trim();
+    const safeField = String(field || "").trim();
+    const teamSize = normalizeDebateTeamSize(options.teamSize, getDebateTeamSize(debate, 1));
+    const active = Boolean(options.active);
+    const isBusy = Boolean(options.isBusy);
+    const selectKey = getDebateEditParticipantSelectKey(safeDebateId, safeField);
+    const currentName = getDebateParticipantEditValue(debate, safeField);
+    const blockedNames = new Set(
+      getActiveDraftParticipantFields(teamSize)
+        .filter((entryField) => entryField !== safeField)
+        .map((entryField) => normalizeUsername(getDebateParticipantEditValue(debate, entryField)))
+        .filter(Boolean)
+    );
+    const optionNames = [...state.directory]
+      .map((entry) => normalizeUsername(entry.username || entry.name || ""))
+      .filter((username) => username && (!blockedNames.has(username) || username === currentName))
+      .filter((username, index, list) => list.indexOf(username) === index)
+      .sort((left, right) => left.localeCompare(right));
+    const isOpen = state.openSelectKey === selectKey;
+
+    return `
+      <label class="field debate-participant-edit-field" data-debate-details-participant="${escapeHtml(safeField)}" ${active ? "" : "hidden"}>
+        <span>${escapeHtml(meta.label)}</span>
+        <div
+          class="custom-select debate-participant-edit-select${isOpen ? " is-open" : ""}"
+          data-select-root="${escapeHtml(selectKey)}"
+          data-debate-edit-select-root="${escapeHtml(selectKey)}"
+        >
+          <div class="custom-select-trigger custom-select-input-row">
+            <input
+              class="custom-select-input${currentName ? "" : " is-placeholder"}"
+              type="text"
+              name="${escapeHtml(safeField)}"
+              value="${escapeHtml(currentName)}"
+              data-debate-edit-participant-input
+              data-select-key="${escapeHtml(selectKey)}"
+              autocomplete="off"
+              autocapitalize="words"
+              spellcheck="false"
+              placeholder="Select debater"
+              aria-haspopup="listbox"
+              aria-expanded="${isOpen ? "true" : "false"}"
+              ${isBusy ? "disabled" : ""}
+            />
+            <button
+              class="custom-select-toggle"
+              type="button"
+              data-action="toggle-debate-edit-participant-select"
+              data-select-key="${escapeHtml(selectKey)}"
+              aria-label="Toggle debater list"
+              tabindex="-1"
+              ${isBusy ? "disabled" : ""}
+            >
+              <span class="custom-select-caret" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="custom-select-menu${isOpen ? "" : " hidden"}" role="listbox" aria-label="${escapeHtml(meta.label)}">
+            <div class="custom-select-options">
+              ${optionNames.map((username) => {
+                const isSelected = username === currentName;
+                return `
+                  <button
+                    class="custom-select-option${isSelected ? " is-selected" : ""}"
+                    type="button"
+                    data-action="choose-debate-edit-participant"
+                    data-label="${escapeHtml(username)}"
+                    data-value="${escapeHtml(username)}"
+                  >
+                    ${escapeHtml(formatDisplayName(username, "Debater"))}
+                  </button>
+                `;
+              }).join("")}
+              <div class="custom-select-empty hidden">No debaters found.</div>
+            </div>
+          </div>
+        </div>
+      </label>
+    `;
+  }
+
   function renderDebateDetailsEditForm(debate, options = {}) {
     if (!currentIsAdmin() || !debate) return "";
 
@@ -7251,22 +7341,8 @@
     const isBusy = safeDebateId && state.actionBusyKey.startsWith(`${safeDebateId}:`);
 
     function renderParticipantField(field) {
-      const meta = getDraftParticipantMeta(field);
-      if (!meta) return "";
-
       const active = getActiveDraftParticipantFields(teamSize).includes(field);
-      return `
-        <label class="field" data-debate-details-participant="${escapeHtml(field)}" ${active ? "" : "hidden"}>
-          <span>${escapeHtml(meta.label)}</span>
-          <input
-            type="text"
-            name="${escapeHtml(field)}"
-            value="${escapeHtml(getDebateParticipantEditValue(debate, field))}"
-            placeholder="username"
-            ${isBusy ? "disabled" : ""}
-          />
-        </label>
-      `;
+      return renderDebateParticipantEditField(debate, field, { active, isBusy, teamSize });
     }
 
     return `
@@ -7646,6 +7722,33 @@
     }
   }
 
+  function syncDebateEditParticipantSelectFilter(rootOrSelectKey) {
+    const root =
+      rootOrSelectKey instanceof Element
+        ? rootOrSelectKey
+        : el.mainContent?.querySelector(`[data-select-root="${String(rootOrSelectKey || "").trim()}"]`);
+    if (!root) return;
+
+    const input = root.querySelector("[data-debate-edit-participant-input]");
+    const emptyState = root.querySelector(".custom-select-empty");
+    const filterValue = normalizeUsername(input instanceof HTMLInputElement ? input.value || "" : "");
+    let visibleCount = 0;
+
+    root.querySelectorAll('.custom-select-option[data-action="choose-debate-edit-participant"]').forEach((node) => {
+      const label = normalizeUsername(node.getAttribute("data-label") || node.textContent || "");
+      const isVisible = !filterValue || label.includes(filterValue);
+      node.classList.toggle("hidden", !isVisible);
+      node.classList.toggle("is-selected", Boolean(filterValue) && label === filterValue);
+      if (isVisible) {
+        visibleCount += 1;
+      }
+    });
+
+    if (emptyState) {
+      emptyState.classList.toggle("hidden", visibleCount > 0);
+    }
+  }
+
   function renderDebaterSelect({ label, field, selectedUid, otherUid, blockedUids, owner = "schedule" }) {
     const safeField = String(field || "").trim();
     const safeOwner = owner === "lazy" ? "lazy" : "schedule";
@@ -7757,7 +7860,11 @@
     const visibleInput = root.querySelector(".custom-select-input");
     if (visibleInput instanceof HTMLInputElement) {
       visibleInput.setAttribute("aria-expanded", open ? "true" : "false");
-      syncDebaterSelectFilter(selectKey);
+      if (visibleInput.hasAttribute("data-debate-edit-participant-input")) {
+        syncDebateEditParticipantSelectFilter(root);
+      } else {
+        syncDebaterSelectFilter(selectKey);
+      }
       if (open) {
         window.requestAnimationFrame(() => {
           visibleInput.focus();
@@ -10221,7 +10328,7 @@
     const target = event.target;
     const clickedInsideSelect = target.closest("[data-select-root]");
     const clickedInsideSearch = target.closest("#search-shell");
-    const clickedSelectInput = target.closest("[data-select-input]");
+    const clickedSelectInput = target.closest("[data-select-input], [data-debate-edit-participant-input]");
 
     if (state.userMenuOpen && !target.closest("#user-menu")) {
       closeUserMenu();
@@ -10421,6 +10528,13 @@
       return;
     }
 
+    if (action === "toggle-debate-edit-participant-select") {
+      event.preventDefault();
+      const selectKey = String(actionButton.getAttribute("data-select-key") || "").trim();
+      toggleOpenSelect(selectKey);
+      return;
+    }
+
     if (action === "toggle-category-select") {
       event.preventDefault();
       const selectKey = String(actionButton.getAttribute("data-select-key") || "").trim();
@@ -10446,6 +10560,19 @@
       if (!syncDraftFormUi(owner)) {
         renderApp({ preserveScroll: true });
       }
+      return;
+    }
+
+    if (action === "choose-debate-edit-participant") {
+      event.preventDefault();
+      const root = actionButton.closest("[data-debate-edit-select-root]");
+      const input = root?.querySelector("[data-debate-edit-participant-input]");
+      const value = normalizeUsername(actionButton.getAttribute("data-value") || "");
+      if (!(input instanceof HTMLInputElement) || !value) return;
+      input.value = value;
+      input.classList.remove("is-placeholder");
+      syncDebateEditParticipantSelectFilter(root);
+      closeOpenSelect();
       return;
     }
 
@@ -10599,7 +10726,19 @@
   }
 
   function handleMainFocusIn(event) {
-    if (!(event.target instanceof HTMLInputElement) || !event.target.hasAttribute("data-select-input")) {
+    if (!(event.target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    if (event.target.hasAttribute("data-debate-edit-participant-input")) {
+      const selectKey = String(event.target.getAttribute("data-select-key") || "").trim();
+      if (selectKey && state.openSelectKey !== selectKey) {
+        toggleOpenSelect(selectKey);
+      }
+      return;
+    }
+
+    if (!event.target.hasAttribute("data-select-input")) {
       return;
     }
 
@@ -10638,6 +10777,16 @@
       syncSearchUi();
       if (!syncMobileSearchPageUi()) {
         renderApp({ preserveScroll: true });
+      }
+      return;
+    }
+
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-debate-edit-participant-input")) {
+      const selectKey = String(event.target.getAttribute("data-select-key") || "").trim();
+      if (selectKey && state.openSelectKey !== selectKey) {
+        toggleOpenSelect(selectKey);
+      } else if (selectKey) {
+        syncDebateEditParticipantSelectFilter(selectKey);
       }
       return;
     }
@@ -10700,6 +10849,33 @@
         openSearchResultsPage(event.target.value || "");
       }
       return;
+    }
+
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-debate-edit-participant-input")) {
+      const selectKey = String(event.target.getAttribute("data-select-key") || "").trim();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeOpenSelect();
+        return;
+      }
+
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && selectKey && state.openSelectKey !== selectKey) {
+        event.preventDefault();
+        toggleOpenSelect(selectKey);
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const root = event.target.closest("[data-debate-edit-select-root]");
+        const firstVisibleOption = root?.querySelector(
+          '.custom-select-option[data-action="choose-debate-edit-participant"]:not(.hidden)'
+        );
+        if (firstVisibleOption instanceof HTMLButtonElement) {
+          firstVisibleOption.click();
+        }
+        return;
+      }
     }
 
     if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-select-input")) {
