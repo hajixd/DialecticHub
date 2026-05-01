@@ -39,13 +39,15 @@
   const ELO_BASELINE = 1100;
   const MIN_RANKED_DEBATES = 3;
   const PLACEMENT_GAME_WEIGHT = 2;
+  const DEBATE_ELO_CHANGE_MULTIPLIER = 3;
+  const DEBATE_ELO_EXPECTED_SCORE_SCALE = 300;
+  const DEBATE_ELO_EXPECTED_SCORE_CAP = 800;
   const FIDE_NEW_PLAYER_K = 40;
   const FIDE_STANDARD_K = 20;
   const FIDE_MASTER_K = 10;
   const FIDE_NEW_PLAYER_GAME_LIMIT = 30;
   const FIDE_JUNIOR_K_AGE_LIMIT = 18;
   const FIDE_JUNIOR_K_RATING_LIMIT = 2300;
-  const FIDE_EXPECTED_SCORE_CAP = 400;
   const FIDE_HIGH_RATING_THRESHOLD = 2400;
   const FIDE_UNCAPPED_DIFF_MIN_RATING = 2650;
   const FIDE_PERIOD_K_LIMIT = 700;
@@ -2223,9 +2225,9 @@
     const cappedDifference =
       debateMillis >= FIDE_UNCAPPED_DIFF_START_MS && safePlayerRating >= FIDE_UNCAPPED_DIFF_MIN_RATING
         ? rawDifference
-        : Math.max(-FIDE_EXPECTED_SCORE_CAP, Math.min(FIDE_EXPECTED_SCORE_CAP, rawDifference));
+        : Math.max(-DEBATE_ELO_EXPECTED_SCORE_CAP, Math.min(DEBATE_ELO_EXPECTED_SCORE_CAP, rawDifference));
 
-    return 1 / (1 + 10 ** (cappedDifference / 400));
+    return 1 / (1 + 10 ** (cappedDifference / DEBATE_ELO_EXPECTED_SCORE_SCALE));
   }
 
   function getFideKFactor(playerSnapshot, periodGames, periodEndMillis) {
@@ -3492,7 +3494,7 @@
         if (!player || !snapshot || !change.games) return;
 
         const kFactor = getFideKFactor(snapshot, change.games, periodEndMillis);
-        const ratingChange = roundHalfAwayFromZero(change.deltaSum * kFactor);
+        const ratingChange = roundHalfAwayFromZero(change.deltaSum * kFactor * DEBATE_ELO_CHANGE_MULTIPLIER);
 
         player.rating += ratingChange;
         if (player.rating >= FIDE_HIGH_RATING_THRESHOLD) {
