@@ -94,6 +94,7 @@
     searchHighlightIndex: -1,
     directory: [],
     debates: [],
+    logs: [],
     userProfiles: [],
     userMenuOpen: false,
     authTab: "login",
@@ -135,7 +136,8 @@
     unsubDirectory: null,
     unsubDebates: null,
     unsubSelfProfile: null,
-    unsubAdminProfiles: null
+    unsubAdminProfiles: null,
+    unsubLogs: null
   };
 
   const el = {
@@ -1154,7 +1156,7 @@
 
   function normalizeSettingsSection(value) {
     const safeValue = String(value || "").trim().toLowerCase();
-    if (["profile", "awaiting", "users"].includes(safeValue)) {
+    if (["profile", "awaiting", "users", "log"].includes(safeValue)) {
       return safeValue;
     }
     return "root";
@@ -1206,7 +1208,7 @@
 
   function setSettingsSection(section) {
     const nextSection = normalizeSettingsSection(section);
-    const requiresAdmin = ["awaiting", "users"].includes(nextSection);
+    const requiresAdmin = ["awaiting", "users", "log"].includes(nextSection);
     if (requiresAdmin && !currentIsAdmin()) {
       return;
     }
@@ -1553,6 +1555,110 @@
       hour: "numeric",
       minute: "2-digit"
     }).format(new Date(millis));
+  }
+
+  function cleanActivityLogValue(value) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value?.toDate === "function") {
+      try {
+        return value.toDate().toISOString();
+      } catch (_) {
+        return null;
+      }
+    }
+    if (Array.isArray(value)) {
+      return value
+        .map((entry) => cleanActivityLogValue(entry))
+        .filter((entry) => entry !== undefined);
+    }
+    if (typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value)
+          .map(([key, entry]) => [key, cleanActivityLogValue(entry)])
+          .filter(([, entry]) => entry !== undefined)
+      );
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === "boolean") return value;
+    return String(value || "");
+  }
+
+  function cleanActivityLogDetails(details) {
+    if (!details || typeof details !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(details)
+        .map(([key, value]) => [key, cleanActivityLogValue(value)])
+        .filter(([, value]) => value !== undefined)
+    );
+  }
+
+  function getActivityActorMeta(options = {}) {
+    const actorId = String(options.actorId || state.user?.uid || auth.currentUser?.uid || "").trim();
+    const actorName =
+      normalizeUsername(
+        options.actorName ||
+          state.username ||
+          state.selfProfile?.username ||
+          state.selfProfile?.name ||
+          auth.currentUser?.displayName ||
+          getNameForUid(actorId, "member")
+      ) || "member";
+    return {
+      actorId,
+      actorName,
+      actorRole: currentIsAdmin() ? "admin" : "user"
+    };
+  }
+
+  async function recordActivityLog(action, options = {}) {
+    const safeAction = String(action || "").trim();
+    const actorMeta = getActivityActorMeta(options);
+    if (!safeAction || !actorMeta.actorId) return;
+
+    const createdAtMs = Date.now();
+    const entry = {
+      action: safeAction,
+      ...actorMeta,
+      targetType: String(options.targetType || "").trim(),
+      targetId: String(options.targetId || "").trim(),
+      targetLabel: String(options.targetLabel || "").trim(),
+      summary: String(options.summary || "").trim(),
+      details: cleanActivityLogDetails(options.details),
+      createdAtMs
+    };
+
+    if (isPreviewMode()) {
+      state.logs = [
+        {
+          id: `preview-log-${createdAtMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          ...entry,
+          createdAt: new Date(createdAtMs)
+        },
+        ...state.logs
+      ].slice(0, 150);
+      return;
+    }
+
+    try {
+      await db.collection("logs").add({
+        ...entry,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } catch (error) {
+      console.warn("Could not write activity log", error);
+    }
+  }
+
+  function getActivityLogMillis(log) {
+    return toMillis(log?.createdAt) || Number(log?.createdAtMs || 0) || 0;
+  }
+
+  function compareActivityLogsDescending(left, right) {
+    return getActivityLogMillis(right) - getActivityLogMillis(left);
   }
 
   function normalizeVideoClipMode(value) {
@@ -3065,6 +3171,7 @@
     unsubscribeFromDebates();
     unsubscribeFromSelfProfile();
     unsubscribeFromAdminProfiles();
+    unsubscribeFromLogs();
     state.user = { uid: "demo-haji", displayName: "haji" };
     state.username = "haji";
     state.profilePictureBusy = false;
@@ -3072,6 +3179,7 @@
     state.userProfiles = [];
     state.directory = createPreviewDirectory();
     state.debates = createPreviewDebates();
+    state.logs = [];
     resetSearchState();
     state.scheduleDraft = makeDefaultScheduleDraft("demo-haji");
     state.lazyDebateDraft = makeDefaultLazyDebateDraft();
@@ -3115,6 +3223,30 @@
         console.warn("Could not subscribe to user profiles", error);
       }
     );
+  }
+
+  function subscribeToLogs() {
+    unsubscribeFromLogs();
+    if (!state.user || !currentIsAdmin() || isPreviewMode()) return;
+
+    state.unsubLogs = db
+      .collection("logs")
+      .orderBy("createdAt", "desc")
+      .limit(150)
+      .onSnapshot(
+        (snapshot) => {
+          state.logs = snapshot.docs
+            .map((doc) => ({
+              id: doc.id,
+              ...(doc.data() || {})
+            }))
+            .sort(compareActivityLogsDescending);
+          renderApp({ preserveScroll: true });
+        },
+        (error) => {
+          console.warn("Could not subscribe to activity logs", error);
+        }
+      );
   }
 
   function subscribeToDirectory() {
@@ -3190,6 +3322,14 @@
     state.userProfiles = [];
   }
 
+  function unsubscribeFromLogs() {
+    if (typeof state.unsubLogs === "function") {
+      state.unsubLogs();
+    }
+    state.unsubLogs = null;
+    state.logs = [];
+  }
+
   function syncAdminProfilesSubscription() {
     if (!state.user || isPreviewMode() || !currentIsAdmin()) {
       unsubscribeFromAdminProfiles();
@@ -3198,6 +3338,21 @@
 
     if (!state.unsubAdminProfiles) {
       subscribeToAdminProfiles();
+    }
+  }
+
+  function syncLogsSubscription() {
+    if (!state.user || !currentIsAdmin()) {
+      unsubscribeFromLogs();
+      return;
+    }
+
+    if (isPreviewMode()) {
+      return;
+    }
+
+    if (!state.unsubLogs) {
+      subscribeToLogs();
     }
   }
 
@@ -3743,6 +3898,7 @@
       selectedDebateVideoEmbedUrl,
       selectedDebateSourcePage,
       selectedDebateCanEditVideo,
+      adminActivityLogs: [...state.logs].sort(compareActivityLogsDescending),
       unresolvedQueue: allDebates
         .filter((debate) => debate.status === "scheduled" || isDebateAwaitingReview(debate))
         .sort((left, right) => {
@@ -3761,6 +3917,7 @@
     if (explicitKey) return explicitKey;
     if (node.classList.contains("mobile-review-rail")) return "mobile-review-rail";
     if (node.classList.contains("admin-awaiting-feed")) return "admin-awaiting-feed";
+    if (node.classList.contains("admin-log-feed")) return "admin-log-feed";
     return "";
   }
 
@@ -3821,6 +3978,7 @@
     }
 
     syncAdminProfilesSubscription();
+    syncLogsSubscription();
 
     if (mobileViewport && state.currentPage === "admin") {
       setPage("settings", { replace: true });
@@ -4782,6 +4940,14 @@
         title: "Users",
         copy: currentIsAdmin() ? "Search and manage user accounts." : "Admin only",
         disabled: !currentIsAdmin()
+      },
+      {
+        section: "log",
+        title: "Log",
+        copy: currentIsAdmin()
+          ? `${model.adminActivityLogs.length} recent action${model.adminActivityLogs.length === 1 ? "" : "s"}.`
+          : "Admin only",
+        disabled: !currentIsAdmin()
       }
     ];
 
@@ -4888,6 +5054,20 @@
     return renderMobileSettingsSectionShell("Users", renderAdminUserList());
   }
 
+  function renderMobileLogSettingsPage(model) {
+    return `
+      <section class="page-shell mobile-page">
+        <section class="mobile-block mobile-scroll-page-block">
+          <div class="mobile-settings-title">
+            <span class="page-kicker">Settings</span>
+            <h2 class="mobile-page-title">Log</h2>
+          </div>
+          ${renderScrollablePanel(renderAdminActivityLog(model.adminActivityLogs), "mobile-page-scroll admin-log-feed")}
+        </section>
+      </section>
+    `;
+  }
+
   function renderMobileSettingsPage(model) {
     const section = normalizeSettingsSection(state.settingsSection);
 
@@ -4901,6 +5081,9 @@
       }
       if (section === "users") {
         return renderMobileUsersSettingsPage();
+      }
+      if (section === "log") {
+        return renderMobileLogSettingsPage(model);
       }
     }
 
@@ -5417,6 +5600,16 @@
           </div>
           ${renderScrollablePanel(renderAdminUserList(), "is-feed")}
         </section>
+
+        <section class="section-panel admin-log-panel">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">Log</h3>
+              <p class="section-copy">Recent site actions, including who did them and when.</p>
+            </div>
+          </div>
+          ${renderScrollablePanel(renderAdminActivityLog(model.adminActivityLogs), "is-feed admin-log-feed")}
+        </section>
       </section>
     `;
   }
@@ -5633,9 +5826,12 @@
 
   function renderScrollablePanel(content, className = "") {
     const classes = ["panel-scroll", className].filter(Boolean).join(" ");
-    const scrollKey = String(className || "").split(/\s+/).includes("admin-awaiting-feed")
+    const classNames = String(className || "").split(/\s+/);
+    const scrollKey = classNames.includes("admin-awaiting-feed")
       ? "admin-awaiting-feed"
-      : "";
+      : classNames.includes("admin-log-feed")
+        ? "admin-log-feed"
+        : "";
     return `
       <div class="${classes}"${scrollKey ? ` data-scroll-key="${escapeHtml(scrollKey)}"` : ""}>
         ${content}
@@ -5759,6 +5955,120 @@
         <div class="admin-user-search-results" id="admin-user-search-results">
           ${renderAdminUserCards(users, query)}
         </div>
+      </div>
+    `;
+  }
+
+  function getActivityActionLabel(action) {
+    const safeAction = String(action || "").trim();
+    const labels = {
+      account_created: "Account Created",
+      profile_avatar_updated: "Profile Picture Updated",
+      username_changed: "Username Changed",
+      password_changed: "Password Changed",
+      user_role_changed: "User Role Changed",
+      debate_scheduled: "Future Debate Added",
+      debate_logged: "Debate Added",
+      debate_submitted: "Debate Submitted",
+      debate_accepted: "Debate Accepted",
+      debate_declined: "Debate Declined",
+      debate_resolved: "Result Claimed",
+      debate_reopened: "Debate Reopened",
+      debate_date_updated: "Debate Date Updated",
+      debate_details_updated: "Debate Details Updated",
+      debate_updated: "Debate Updated",
+      debate_video_updated: "Video Updated",
+      debate_video_removed: "Video Removed",
+      comment_added: "Comment Added"
+    };
+    if (labels[safeAction]) return labels[safeAction];
+    return formatDisplayName(safeAction.replace(/[_-]+/g, " "), "Action");
+  }
+
+  function formatActivityDetailKey(key) {
+    return formatDisplayName(
+      String(key || "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/[_-]+/g, " "),
+      "Detail"
+    );
+  }
+
+  function formatActivityDetailValue(value) {
+    if (value === null || value === undefined || value === "") return "";
+    if (Array.isArray(value)) {
+      return value.map((entry) => formatActivityDetailValue(entry)).filter(Boolean).join(", ");
+    }
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (typeof value === "object") {
+      return Object.entries(value)
+        .map(([key, entry]) => {
+          const rendered = formatActivityDetailValue(entry);
+          return rendered ? `${formatActivityDetailKey(key)} ${rendered}` : "";
+        })
+        .filter(Boolean)
+        .join(", ");
+    }
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    return raw.length > 90 ? `${raw.slice(0, 87)}...` : raw;
+  }
+
+  function getActivityDetailItems(log) {
+    const details = log?.details && typeof log.details === "object" ? log.details : {};
+    return Object.entries(details)
+      .map(([key, value]) => {
+        const rendered = formatActivityDetailValue(value);
+        return rendered ? `${formatActivityDetailKey(key)}: ${rendered}` : "";
+      })
+      .filter(Boolean)
+      .slice(0, 4);
+  }
+
+  function renderAdminActivityLog(logs) {
+    const list = (Array.isArray(logs) ? logs : []).filter(Boolean);
+    if (!list.length) {
+      return renderEmptyState("No actions logged yet", "New debate and admin actions will show up here.");
+    }
+
+    return `
+      <div class="admin-log-list">
+        ${list
+          .map((log) => {
+            const actionLabel = getActivityActionLabel(log.action);
+            const actorName = formatDisplayName(log.actorName || getNameForUid(log.actorId, "member"), "Member");
+            const actorId = String(log.actorId || "").trim();
+            const whenValue = log.createdAt || log.createdAtMs || "";
+            const whenLabel = getActivityLogMillis(log) ? formatDateTime(whenValue) : "Pending";
+            const stampLabel = formatRelativeStamp(whenValue) || whenLabel;
+            const targetType = formatDisplayName(log.targetType || "", "");
+            const targetLabel = String(log.targetLabel || "").trim();
+            const summary =
+              String(log.summary || "").trim() ||
+              (targetLabel ? `${actionLabel}: ${targetLabel}` : actionLabel);
+            const detailItems = getActivityDetailItems(log);
+            return `
+              <article class="admin-log-card">
+                <div class="admin-log-head">
+                  <strong>${escapeHtml(actionLabel)}</strong>
+                  <span>${escapeHtml(stampLabel)}</span>
+                </div>
+                <p class="admin-log-summary">${escapeHtml(summary)}</p>
+                <div class="admin-log-meta">
+                  <span>Who: ${escapeHtml(actorName)}</span>
+                  <span>When: ${escapeHtml(whenLabel)}</span>
+                  ${actorId ? `<span>UID: ${escapeHtml(actorId)}</span>` : ""}
+                  ${targetLabel ? `<span>${escapeHtml(targetType || "Target")}: ${escapeHtml(targetLabel)}</span>` : ""}
+                </div>
+                ${
+                  detailItems.length
+                    ? `<div class="admin-log-details">${detailItems.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
+                    : ""
+                }
+              </article>
+            `;
+          })
+          .join("")}
       </div>
     `;
   }
@@ -8008,6 +8318,14 @@
         console.warn("Could not claim invited debates during signup", error);
       }
       applyPlaceholderClaimLocally(user.uid, username);
+      recordActivityLog("account_created", {
+        actorId: user.uid,
+        actorName: username,
+        targetType: "user",
+        targetId: user.uid,
+        targetLabel: username,
+        summary: `${formatDisplayName(username, "Member")} created an account.`
+      });
       createSucceeded = true;
       safeLsSet(LS_LAST_USERNAME, username);
       if (el.createPassword) {
@@ -8175,6 +8493,16 @@
 
       closeAccountModal(true);
       showToast(`${safeName} is now ${nextRole === "admin" ? "an admin" : "a user"}.`, "success");
+      recordActivityLog("user_role_changed", {
+        targetType: "user",
+        targetId: safeUid,
+        targetLabel: safeName,
+        summary: `${safeName} was changed to ${nextRole === "admin" ? "admin" : "user"}.`,
+        details: {
+          previousRole: currentRole,
+          nextRole
+        }
+      });
     } catch (error) {
       console.warn("Could not change user role", error);
       const message = isFirestorePermissionDenied(error)
@@ -8263,6 +8591,13 @@
         applyDirectoryAvatarLocally(targetUid, dataUrl);
         renderApp({ preserveScroll: true });
         showToast(isOwnTarget ? "Profile picture updated." : `${targetDisplayName} profile picture updated.`, "success");
+        recordActivityLog("profile_avatar_updated", {
+          targetType: "user",
+          targetId: targetUid,
+          targetLabel: targetName,
+          summary: `${targetDisplayName} profile picture was updated.`,
+          details: { selfUpdate: isOwnTarget }
+        });
         return;
       }
 
@@ -8314,6 +8649,13 @@
 
       renderApp({ preserveScroll: true });
       showToast(isOwnTarget ? "Profile picture updated." : `${targetDisplayName} profile picture updated.`, "success");
+      recordActivityLog("profile_avatar_updated", {
+        targetType: "user",
+        targetId: targetUid,
+        targetLabel: targetName,
+        summary: `${targetDisplayName} profile picture was updated.`,
+        details: { selfUpdate: isOwnTarget }
+      });
     } finally {
       state.profilePictureBusy = false;
       if (isOwnTarget && el.menuChangeProfilePictureBtn) {
@@ -8842,6 +9184,17 @@
       closeAccountModal(true);
       renderApp({ preserveScroll: true });
       showToast("Username updated.", "success");
+      recordActivityLog("username_changed", {
+        targetType: "user",
+        targetId: safeUid,
+        targetLabel: next,
+        summary: `${formatDisplayName(current, "User")} was renamed to ${formatDisplayName(next, "User")}.`,
+        details: {
+          previousUsername: current,
+          nextUsername: next,
+          placeholder: isPlaceholderTarget
+        }
+      });
       return;
     }
 
@@ -8939,6 +9292,18 @@
         syncedDebateNames ? "Username updated." : "Username updated. Some debate labels may refresh shortly.",
         "success"
       );
+      recordActivityLog("username_changed", {
+        targetType: "user",
+        targetId: safeUid,
+        targetLabel: next,
+        summary: `${formatDisplayName(current, "User")} was renamed to ${formatDisplayName(next, "User")}.`,
+        details: {
+          previousUsername: current,
+          nextUsername: next,
+          placeholder: isPlaceholderTarget,
+          syncedDebateNames
+        }
+      });
     } catch (error) {
       console.warn("Admin username change failed", error);
       const message = String(error?.message || "");
@@ -8986,6 +9351,17 @@
       closeAccountModal(true);
       renderApp({ preserveScroll: true });
       showToast("Username updated.", "success");
+      recordActivityLog("username_changed", {
+        targetType: "user",
+        targetId: activeUid,
+        targetLabel: next,
+        summary: `${formatDisplayName(current, "User")} was renamed to ${formatDisplayName(next, "User")}.`,
+        details: {
+          previousUsername: current,
+          nextUsername: next,
+          selfUpdate: true
+        }
+      });
       return;
     }
 
@@ -9059,6 +9435,18 @@
         syncedDebateNames ? "Username updated." : "Username updated. Some debate labels may refresh shortly.",
         "success"
       );
+      recordActivityLog("username_changed", {
+        targetType: "user",
+        targetId: activeUid,
+        targetLabel: next,
+        summary: `${formatDisplayName(current, "User")} was renamed to ${formatDisplayName(next, "User")}.`,
+        details: {
+          previousUsername: current,
+          nextUsername: next,
+          selfUpdate: true,
+          syncedDebateNames
+        }
+      });
     } catch (error) {
       console.warn("Username change failed", error);
       const message = String(error?.message || "");
@@ -9100,6 +9488,13 @@
       await user.updatePassword(passwordForAuth(nextPassword));
       closeAccountModal(true);
       showToast("Password updated.", "success");
+      recordActivityLog("password_changed", {
+        targetType: "user",
+        targetId: String(user.uid || "").trim(),
+        targetLabel: state.username || user.displayName || "member",
+        summary: "Password was updated.",
+        details: { selfUpdate: true }
+      });
     } catch (error) {
       console.warn("Password change failed", error);
       const code = String(error?.code || "");
@@ -9155,6 +9550,7 @@
       unsubscribeFromDebates();
       unsubscribeFromSelfProfile();
       unsubscribeFromAdminProfiles();
+      unsubscribeFromLogs();
       state.username = "";
       state.profilePictureBusy = false;
       state.profilePictureTargetUid = "";
@@ -9291,6 +9687,43 @@
     };
   }
 
+  function getDebateActivityTarget(debate, fallbackId = "") {
+    const safeDebate = debate || {};
+    const targetId = String(safeDebate.id || fallbackId || "").trim();
+    const targetLabel = String(safeDebate.topic || "Untitled debate").trim() || "Untitled debate";
+    return {
+      targetType: "debate",
+      targetId,
+      targetLabel
+    };
+  }
+
+  function getDebatePatchFieldLabels(patch) {
+    const labels = {
+      topic: "topic",
+      category: "category",
+      teamSize: "format",
+      moderator: "moderator",
+      scheduledFor: "date",
+      result: "winner",
+      debaterAUid: "Team A",
+      debaterAName: "Team A",
+      debaterA2Uid: "Team A teammate",
+      debaterA2Name: "Team A teammate",
+      debaterBUid: "Team B",
+      debaterBName: "Team B",
+      debaterB2Uid: "Team B teammate",
+      debaterB2Name: "Team B teammate"
+    };
+    return [
+      ...new Set(
+        Object.keys(patch || {})
+          .map((field) => labels[field] || "")
+          .filter(Boolean)
+      )
+    ];
+  }
+
   async function handleScheduleSubmit(event) {
     event.preventDefault();
     if (!state.user || state.scheduleSaving) return;
@@ -9345,39 +9778,46 @@
       }
 
       if (isPreviewMode()) {
-        state.debates = [
-          ...state.debates,
-          {
-            id: `preview-${Date.now().toString(36)}`,
-            topic,
-            category,
-            teamSize,
-            ...participantPatch,
-            scheduledFor: scheduledDate,
-            moderator,
-            description,
-            status: "scheduled",
-            result: "pending",
-            winnerUid: "",
-            winnerName: "",
-            createdByUid: String(state.user.uid || "").trim(),
-            createdByName: state.username || "member",
-            claimedByUid: "",
-            claimedByName: "",
-            claimedAt: null,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          }
-        ];
+        const previewDebate = {
+          id: `preview-${Date.now().toString(36)}`,
+          topic,
+          category,
+          teamSize,
+          ...participantPatch,
+          scheduledFor: scheduledDate,
+          moderator,
+          description,
+          status: "scheduled",
+          result: "pending",
+          winnerUid: "",
+          winnerName: "",
+          createdByUid: String(state.user.uid || "").trim(),
+          createdByName: state.username || "member",
+          claimedByUid: "",
+          claimedByName: "",
+          claimedAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        state.debates = [...state.debates, previewDebate];
 
         state.scheduleDraft = makeDefaultScheduleDraft(String(state.user.uid || ""));
         ensureScheduleDraftParticipants();
         showToast("Future debate logged.", "success");
+        recordActivityLog("debate_scheduled", {
+          ...getDebateActivityTarget(previewDebate),
+          summary: `Future debate added: ${topic}.`,
+          details: {
+            category,
+            scheduledFor: scheduledDate,
+            teamSize
+          }
+        });
         setPage("dashboard");
         return;
       }
 
-      await db.collection("debates").add({
+      const docRef = await db.collection("debates").add({
         topic,
         category,
         teamSize,
@@ -9401,6 +9841,17 @@
       state.scheduleDraft = makeDefaultScheduleDraft(String(state.user.uid || ""));
       ensureScheduleDraftParticipants();
       showToast("Future debate logged.", "success");
+      recordActivityLog("debate_scheduled", {
+        targetType: "debate",
+        targetId: docRef.id,
+        targetLabel: topic,
+        summary: `Future debate added: ${topic}.`,
+        details: {
+          category,
+          scheduledFor: scheduledDate,
+          teamSize
+        }
+      });
       setPage("dashboard");
     } catch (error) {
       console.warn("Could not log future debate", error);
@@ -9500,40 +9951,49 @@
       const reviewStatus = submittedByAdmin ? "resolved" : "awaiting_review";
 
       if (isPreviewMode()) {
-        state.debates = [
-          ...state.debates,
-          {
-            id: `preview-${Date.now().toString(36)}`,
-            topic,
-            category,
-            teamSize,
-            ...participantPatch,
-            scheduledFor: scheduledDate,
-            moderator,
-            description,
-            status: reviewStatus,
-            result,
-            winnerUid,
-            winnerName,
-            createdByUid: String(state.user.uid || "").trim(),
-            createdByName: actorName,
-            claimedByUid: submittedByAdmin ? String(state.user.uid || "").trim() : "",
-            claimedByName: submittedByAdmin ? actorName : "",
-            claimedAt: submittedByAdmin ? now : null,
-            createdAt: now,
-            updatedAt: now,
-            comments: [],
-            ...videoPayload
-          }
-        ];
+        const previewDebate = {
+          id: `preview-${Date.now().toString(36)}`,
+          topic,
+          category,
+          teamSize,
+          ...participantPatch,
+          scheduledFor: scheduledDate,
+          moderator,
+          description,
+          status: reviewStatus,
+          result,
+          winnerUid,
+          winnerName,
+          createdByUid: String(state.user.uid || "").trim(),
+          createdByName: actorName,
+          claimedByUid: submittedByAdmin ? String(state.user.uid || "").trim() : "",
+          claimedByName: submittedByAdmin ? actorName : "",
+          claimedAt: submittedByAdmin ? now : null,
+          createdAt: now,
+          updatedAt: now,
+          comments: [],
+          ...videoPayload
+        };
+        state.debates = [...state.debates, previewDebate];
 
         state.lazyDebateDraft = makeDefaultLazyDebateDraft();
         showToast(submittedByAdmin ? "Debate logged." : "Debate submitted for admin review.", "success");
+        recordActivityLog(submittedByAdmin ? "debate_logged" : "debate_submitted", {
+          ...getDebateActivityTarget(previewDebate),
+          summary: submittedByAdmin ? `Debate added: ${topic}.` : `Debate submitted for review: ${topic}.`,
+          details: {
+            category,
+            scheduledFor: scheduledDate,
+            result,
+            winnerName,
+            status: reviewStatus
+          }
+        });
         renderApp({ preserveScroll: true });
         return;
       }
 
-      await db.collection("debates").add({
+      const docRef = await db.collection("debates").add({
         topic,
         category,
         teamSize,
@@ -9560,6 +10020,19 @@
 
       state.lazyDebateDraft = makeDefaultLazyDebateDraft();
       showToast(submittedByAdmin ? "Debate logged." : "Debate submitted for admin review.", "success");
+      recordActivityLog(submittedByAdmin ? "debate_logged" : "debate_submitted", {
+        targetType: "debate",
+        targetId: docRef.id,
+        targetLabel: topic,
+        summary: submittedByAdmin ? `Debate added: ${topic}.` : `Debate submitted for review: ${topic}.`,
+        details: {
+          category,
+          scheduledFor: scheduledDate,
+          result,
+          winnerName,
+          status: reviewStatus
+        }
+      });
     } catch (error) {
       console.warn("Could not log debate", error);
       const message = isFirestorePermissionDenied(error)
@@ -9619,6 +10092,14 @@
       }
 
       showToast("Comment posted.", "success");
+      recordActivityLog("comment_added", {
+        ...getDebateActivityTarget(debate, debateId),
+        summary: `Comment added to ${debate.topic || "a debate"}.`,
+        details: {
+          commentId: comment.id,
+          commentPreview: commentText.slice(0, 90)
+        }
+      });
     } catch (error) {
       console.warn("Could not post comment", error);
       showToast("Could not post that comment right now.", "error");
@@ -9681,6 +10162,15 @@
       }
 
       showToast(videoUrl ? "Video updated." : "Video removed.", "success");
+      recordActivityLog(videoUrl ? "debate_video_updated" : "debate_video_removed", {
+        ...getDebateActivityTarget(debate, debateId),
+        summary: videoUrl ? `Video updated for ${debate.topic || "a debate"}.` : `Video removed from ${debate.topic || "a debate"}.`,
+        details: {
+          videoMode,
+          videoClipStart: videoPayload.videoClipStart,
+          videoClipEnd: videoPayload.videoClipEnd
+        }
+      });
     } catch (error) {
       console.warn("Could not save video link", error);
       showToast("Could not save that video right now.", "error");
@@ -9929,6 +10419,13 @@
     try {
       await saveDebatePatch(debateId, patch);
       showToast("Debate date updated.", "success");
+      recordActivityLog("debate_date_updated", {
+        ...getDebateActivityTarget(debate, debateId),
+        summary: `Debate date updated: ${debate.topic || "Untitled debate"}.`,
+        details: {
+          scheduledFor: patch.scheduledFor
+        }
+      });
     } catch (error) {
       console.warn("Could not update debate date", error);
       showToast(getDebateEditErrorMessage(error, "changing debate dates", "Could not update that debate date right now."), "error");
@@ -9987,6 +10484,14 @@
     try {
       await saveDebatePatch(debateId, patch);
       showToast("Debate details updated.", "success");
+      recordActivityLog("debate_details_updated", {
+        ...getDebateActivityTarget(debate, debateId),
+        summary: `Debate details updated: ${debate.topic || "Untitled debate"}.`,
+        details: {
+          fields: getDebatePatchFieldLabels(patch),
+          result: patch.result || ""
+        }
+      });
     } catch (error) {
       console.warn("Could not update debate details", error);
       showToast(getDebateEditErrorMessage(error, "editing debates", "Could not update those debate details right now."), "error");
@@ -10033,6 +10538,15 @@
     try {
       await saveDebatePatch(safeDebateId, patch);
       showToast("Debate updated.", "success");
+      recordActivityLog("debate_updated", {
+        ...getDebateActivityTarget(debate, safeDebateId),
+        summary: `Debate updated: ${debate.topic || "Untitled debate"}.`,
+        details: {
+          fields: getDebatePatchFieldLabels(patch),
+          scheduledFor: patch.scheduledFor || "",
+          result: patch.result || ""
+        }
+      });
     } catch (error) {
       console.warn("Could not save debate changes", error);
       showToast(getDebateEditErrorMessage(error, "editing debates", "Could not save those debate changes right now."), "error");
@@ -10188,6 +10702,14 @@
         }
         await animationPromise;
         showToast("Debate submission declined.", "success");
+        recordActivityLog("debate_declined", {
+          ...getDebateActivityTarget(debate, debateId),
+          summary: `Debate submission declined: ${debate.topic || "Untitled debate"}.`,
+          details: {
+            submittedBy: debate.createdByName || "",
+            result: debate.result || ""
+          }
+        });
         return;
       }
 
@@ -10226,6 +10748,15 @@
 
       await animationPromise;
       showToast("Debate approved.", "success");
+      recordActivityLog("debate_accepted", {
+        ...getDebateActivityTarget(debate, debateId),
+        summary: `Debate submission accepted: ${debate.topic || "Untitled debate"}.`,
+        details: {
+          submittedBy: debate.createdByName || "",
+          result: debate.result || "",
+          winnerName
+        }
+      });
     } catch (error) {
       console.warn("Could not review submitted debate", error);
       const message = isFirestorePermissionDenied(error)
@@ -10312,6 +10843,17 @@
 
       await db.collection("debates").doc(debateId).update(payload);
       showToast(outcome === "reopen" ? "Debate reopened." : "Result claimed.", "success");
+      recordActivityLog(outcome === "reopen" ? "debate_reopened" : "debate_resolved", {
+        ...getDebateActivityTarget(debate, debateId),
+        summary:
+          outcome === "reopen"
+            ? `Debate reopened: ${debate.topic || "Untitled debate"}.`
+            : `Result claimed for ${debate.topic || "Untitled debate"}.`,
+        details: {
+          result: outcome,
+          videoAdded: Boolean(videoPayload?.videoUrl)
+        }
+      });
     } catch (error) {
       console.warn("Could not claim result", error);
       const message = isFirestorePermissionDenied(error)
