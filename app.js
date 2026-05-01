@@ -1153,7 +1153,10 @@
     state.debateId = nextPage === "debate" && requestedDebateId ? requestedDebateId : "";
     state.settingsSection = nextPage === "settings" ? normalizeSettingsSection(options.settingsSection || "root") : "root";
     state.archiveEditMode = nextPage === "archive" ? state.archiveEditMode : false;
-    state.debateEditMode = nextPage === "debate" && requestedDebateId && requestedDebateId === currentDebateId ? state.debateEditMode : false;
+    state.debateEditMode =
+      nextPage === "debate" && requestedDebateId
+        ? Boolean(options.debateEditMode || (requestedDebateId === currentDebateId && state.debateEditMode))
+        : false;
     state.openSelectKey = "";
     state.searchSuggestions = [];
     state.searchMenuOpen = false;
@@ -1294,6 +1297,14 @@
     const safeDebateId = String(debateId || "").trim();
     if (!safeDebateId) return;
     setPage("debate", { debateId: safeDebateId });
+  }
+
+  function openDebateForEdit(debateId) {
+    const safeDebateId = String(debateId || "").trim();
+    if (!safeDebateId) return;
+    const debate = state.debates.find((entry) => entry.id === safeDebateId) || null;
+    if (!canToggleDebateEdit(debate)) return;
+    setPage("debate", { debateId: safeDebateId, debateEditMode: true });
   }
 
   function closeUserMenu() {
@@ -3987,7 +3998,7 @@
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
     const resultLabel = isAwaitingReview
-      ? `Submitted: ${getDebateSubmittedResultLabel(debate)}`
+      ? debateStatus.label
       : debate.status === "resolved"
         ? debate.result === "draw"
           ? "Draw"
@@ -3996,10 +4007,12 @@
     const resultTone = isAwaitingReview ? " review" : debate.result === "draw" ? " draw" : " positive";
     const showStatusChip = !options.hideStatus;
     const showResultPill = !options.hideResultPill && Boolean(resultLabel);
-    const categoryClassName = options.fullWidthCategory ? "category-tag-wide" : "";
+    const isAdminReviewCard = Boolean(options.adminReviewCard && isAwaitingReview);
+    const categoryClassName = options.fullWidthCategory || isAdminReviewCard ? "category-tag-wide" : "";
+    const statusClassName = options.fullWidthStatus || isAdminReviewCard ? "status-chip-wide" : "";
 
     return `
-      <article class="mobile-entry">
+      <article class="mobile-entry${isAdminReviewCard ? " is-admin-review" : ""}">
         <button
           class="mobile-list-row debate-card-link"
           type="button"
@@ -4010,7 +4023,7 @@
           <div class="mobile-row-meta">${escapeHtml(formatDateTime(debate.scheduledFor))}</div>
           ${renderDebatePeopleRow(debate, { mobile: true, static: true })}
           <div class="mobile-row-foot">
-            ${showStatusChip ? `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)}">${escapeHtml(debateStatus.label)}</span>` : ""}
+            ${showStatusChip ? `<span class="mini-tag status-chip ${escapeHtml(debateStatus.className)} ${statusClassName}">${escapeHtml(debateStatus.label)}</span>` : ""}
             ${renderCategoryBadge(debate.category, categoryClassName)}
             ${showResultPill ? `<span class="result-pill${resultTone}">${escapeHtml(resultLabel)}</span>` : ""}
           </div>
@@ -4022,9 +4035,8 @@
                 ${
                   isAwaitingReview
                     ? `
-                      <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
                       ${renderAdminQueueVideoEmbed(debate, { mobile: true })}
-                      <div class="mobile-admin-actions">
+                      <div class="mobile-admin-actions admin-review-actions">
                         <button
                           class="result-btn win"
                           type="button"
@@ -4044,6 +4056,15 @@
                           ${isBusy ? "disabled" : ""}
                         >
                           Decline
+                        </button>
+                        <button
+                          class="result-btn edit"
+                          type="button"
+                          data-action="edit-debate"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Edit
                         </button>
                       </div>
                     `
@@ -4103,6 +4124,39 @@
           .slice(0, Number(options.limit) > 0 ? Number(options.limit) : list.length)
           .map((debate) => renderMobileDebateRow(debate, options))
           .join("")}
+      </div>
+    `;
+  }
+
+  function renderMobileAdminReviewDeck(debates, options = {}) {
+    const list = Array.isArray(debates) ? debates : [];
+    if (!list.length) {
+      return renderEmptyState(options.emptyTitle || "Nothing here yet", "");
+    }
+
+    return `
+      <div class="mobile-review-deck">
+        <div class="mobile-review-rail" aria-label="Awaiting debate review cards">
+          ${list
+            .map((debate, index) => {
+              return `
+                <div class="mobile-review-slide" style="--review-card-delay: ${Math.min(index, 6) * 42}ms;">
+                  ${renderMobileDebateRow(debate, {
+                    ...options,
+                    adminReviewCard: true,
+                    hideResultPill: true,
+                    fullWidthCategory: true,
+                    fullWidthStatus: true,
+                    showAdminControls: true
+                  })}
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+        <div class="mobile-review-dots" aria-hidden="true">
+          ${list.map(() => '<span class="mobile-review-dot"></span>').join("")}
+        </div>
       </div>
     `;
   }
@@ -4236,8 +4290,8 @@
       : "";
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
-    const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
-    const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
+    const resultDetailLabel = isAwaitingReview ? "Status" : "Winner";
+    const resultDetailValue = isAwaitingReview ? debateStatus.label : winnerName || "N/A";
     const resultToneClass = isAwaitingReview
       ? " is-review"
       : debate.status === "resolved" && debate.result === "draw"
@@ -4764,13 +4818,22 @@
   }
 
   function renderMobileAwaitingResultsPage(model) {
-    return renderMobileSettingsSectionShell(
-      "Awaiting Results",
-      renderMobileDebateList(model.unresolvedQueue, {
-        emptyTitle: "Nothing is waiting on admin",
-        showAdminControls: true
-      })
-    );
+    return `
+      <section class="page-shell mobile-page">
+        <section class="mobile-block mobile-scroll-page-block mobile-review-page">
+          <div class="mobile-settings-title mobile-review-title">
+            <span class="page-kicker">Settings</span>
+            <h2 class="mobile-page-title">Awaiting Results</h2>
+          </div>
+          ${renderScrollablePanel(
+            renderMobileAdminReviewDeck(model.unresolvedQueue, {
+              emptyTitle: "Nothing is waiting on admin"
+            }),
+            "mobile-page-scroll mobile-review-page-scroll"
+          )}
+        </section>
+      </section>
+    `;
   }
 
   function renderMobileUsersSettingsPage() {
@@ -4951,8 +5014,9 @@
           : ""
       : "";
     const isAwaitingReview = isDebateAwaitingReview(debate);
-    const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
-    const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
+    const debateStatus = getDebateStatus(debate);
+    const resultDetailLabel = isAwaitingReview ? "Status" : "Winner";
+    const resultDetailValue = isAwaitingReview ? debateStatus.label : winnerName || "N/A";
     const resultToneClass = isAwaitingReview
       ? " is-review"
       : debate.status === "resolved" && debate.result === "draw"
@@ -5719,8 +5783,8 @@
     const winnerName = getDebateWinnerName(debate);
     const debateStatus = getDebateStatus(debate);
     const isAwaitingReview = isDebateAwaitingReview(debate);
-    const resultDetailLabel = isAwaitingReview ? "Submitted" : "Winner";
-    const resultDetailValue = isAwaitingReview ? getDebateSubmittedResultLabel(debate) : winnerName || "N/A";
+    const resultDetailLabel = isAwaitingReview ? "Status" : "Winner";
+    const resultDetailValue = isAwaitingReview ? debateStatus.label : winnerName || "N/A";
     const resultToneClass = isAwaitingReview
       ? " is-review"
       : debate.status === "resolved" && debate.result === "draw"
@@ -5731,7 +5795,7 @@
 
     return `
       <article
-        class="debate-card debate-card-link"
+        class="debate-card debate-card-link${isAwaitingReview ? " is-admin-review" : ""}"
         data-action="open-debate"
         data-debate-id="${escapeHtml(debate.id)}"
         role="button"
@@ -5743,11 +5807,6 @@
             <div class="debate-subline">
               ${formatDateTime(debate.scheduledFor)}
             </div>
-            ${
-              isAwaitingReview
-                ? `<div class="debate-subline">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>`
-                : ""
-            }
           </div>
         </div>
 
@@ -5776,7 +5835,7 @@
                   isAwaitingReview
                     ? `
                       ${renderAdminQueueVideoEmbed(debate)}
-                      <div class="admin-actions">
+                      <div class="admin-actions admin-review-actions">
                         <button
                           class="result-btn win"
                           type="button"
@@ -5796,6 +5855,15 @@
                           ${isBusy ? "disabled" : ""}
                         >
                           Decline
+                        </button>
+                        <button
+                          class="result-btn edit"
+                          type="button"
+                          data-action="edit-debate"
+                          data-debate-id="${escapeHtml(debate.id)}"
+                          ${isBusy ? "disabled" : ""}
+                        >
+                          Edit
                         </button>
                       </div>
                     `
@@ -5984,8 +6052,10 @@
     const entries = getDebateTeamParticipants(debate, teamId);
     const safeTeamId = String(teamId || "").trim().toLowerCase() === "b" ? "b" : "a";
     const badgeRenderer = options.static ? renderStaticPersonBadge : renderPersonBadge;
-    const isWinner = debate?.status === "resolved" && debate?.result === safeTeamId;
-    const isLoser = debate?.status === "resolved" && ["a", "b"].includes(String(debate?.result || "")) && debate?.result !== safeTeamId;
+    const debateResult = String(debate?.result || "").trim().toLowerCase();
+    const showResultTone = debate?.status === "resolved" || isDebateAwaitingReview(debate);
+    const isWinner = showResultTone && debateResult === safeTeamId;
+    const isLoser = showResultTone && ["a", "b"].includes(debateResult) && debateResult !== safeTeamId;
     const fallbackLabel = safeTeamId === "a" ? "Team A" : "Team B";
     if (!entries.length) {
       return `<span class="team-badge-group is-empty">${escapeHtml(fallbackLabel)}</span>`;
@@ -7121,8 +7191,7 @@
       content = `
         ${renderDebateDetailsEditForm(debate, { mobile })}
         ${renderDebateDateEditForm(debate, { mobile })}
-        <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
-        <div class="${actionsClassName}">
+        <div class="${actionsClassName} admin-review-actions">
           <button
             class="result-btn win"
             type="button"
@@ -7142,6 +7211,15 @@
             ${isBusy ? "disabled" : ""}
           >
             Decline
+          </button>
+          <button
+            class="result-btn edit"
+            type="button"
+            data-action="edit-debate"
+            data-debate-id="${escapeHtml(debate.id)}"
+            ${isBusy ? "disabled" : ""}
+          >
+            Edit
           </button>
         </div>
       `;
@@ -9812,6 +9890,12 @@
     if (action === "open-debate") {
       event.preventDefault();
       openDebate(actionButton.getAttribute("data-debate-id"));
+      return;
+    }
+
+    if (action === "edit-debate") {
+      event.preventDefault();
+      openDebateForEdit(actionButton.getAttribute("data-debate-id"));
       return;
     }
 

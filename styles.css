@@ -979,6 +979,26 @@ textarea:focus {
   border-color: rgba(255, 255, 255, 0.14);
 }
 
+.result-btn.edit {
+  border-color: rgba(212, 176, 103, 0.28);
+  background: rgba(212, 176, 103, 0.12);
+  color: var(--accent-strong);
+}
+
+.admin-actions.admin-review-actions,
+.mobile-admin-actions.admin-review-actions,
+.admin-review-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  gap: 10px;
+}
+
+.admin-review-actions .result-btn {
+  width: 100%;
+  min-height: 46px;
+}
+
 .winner-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2527,6 +2547,15 @@ textarea:focus {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
+.debate-card.is-admin-review .detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.debate-card.is-admin-review .detail-row {
+  width: 100%;
+}
+
 .schedule-page .page-hero,
 .schedule-page .section-panel,
 .schedule-page .debate-card,
@@ -2601,6 +2630,12 @@ body:not(.is-mobile-app) .schedule-page > .section-panel {
   border-radius: 999px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.status-chip-wide,
+.category-tag-wide {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .status-scheduled {
@@ -4071,6 +4106,82 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   gap: 12px;
 }
 
+.is-mobile-app .mobile-review-page-scroll {
+  overflow-x: hidden;
+  padding-right: 0;
+}
+
+.is-mobile-app .mobile-review-deck {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.is-mobile-app .mobile-review-rail {
+  display: flex;
+  gap: 14px;
+  margin: 0 -2px;
+  padding: 2px 2px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 2px;
+  scrollbar-width: none;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.is-mobile-app .mobile-review-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.is-mobile-app .mobile-review-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: center;
+  animation: mobile-review-card-in 360ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: var(--review-card-delay, 0ms);
+}
+
+.is-mobile-app .mobile-review-slide .mobile-entry {
+  height: 100%;
+  min-height: min(620px, calc(var(--mobile-content-height) - 154px));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.24);
+  transform-origin: center bottom;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.is-mobile-app .mobile-review-slide:active .mobile-entry {
+  border-color: rgba(212, 176, 103, 0.28);
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.3);
+  transform: scale(0.985) rotate(0.35deg);
+}
+
+.is-mobile-app .mobile-review-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.is-mobile-app .mobile-review-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+@keyframes mobile-review-card-in {
+  from {
+    opacity: 0;
+    transform: translateX(22px) rotate(1.4deg) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) rotate(0deg) scale(1);
+  }
+}
+
 .is-mobile-app .panel-scroll.mobile-profile-scroll {
   max-height: min(38svh, 360px);
   padding-right: 2px;
@@ -4090,6 +4201,22 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   border: 1px solid var(--surface-divider);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.is-mobile-app .mobile-entry.is-admin-review {
+  grid-template-rows: auto 1fr;
+  align-content: start;
+  padding: 16px;
+}
+
+.is-mobile-app .mobile-entry.is-admin-review .mobile-admin-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.is-mobile-app .mobile-entry.is-admin-review .admin-review-actions {
+  margin-top: auto;
 }
 
 .is-mobile-app .mobile-list .mobile-entry:first-child,
@@ -4160,7 +4287,13 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   gap: 8px;
 }
 
-.is-mobile-app .mobile-row-foot .category-tag-wide {
+.is-mobile-app .mobile-entry.is-admin-review .mobile-row-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.is-mobile-app .mobile-row-foot .category-tag-wide,
+.is-mobile-app .mobile-row-foot .status-chip-wide {
   width: 100%;
   justify-content: flex-start;
 }
@@ -4169,6 +4302,11 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.is-mobile-app .mobile-admin-actions.admin-review-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .is-mobile-app .mobile-ranking-row {
