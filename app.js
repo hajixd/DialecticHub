@@ -9395,11 +9395,10 @@
         claimedAt: submittedByAdmin ? firebase.firestore.FieldValue.serverTimestamp() : null,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        ...buildDebateVideoPayload(videoUrl, {
-          addedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          addedByUid: String(state.user.uid || "").trim(),
-          addedByName: actorName
-        })
+        ...videoPayload,
+        videoAddedAt: videoPayload.videoUrl ? firebase.firestore.FieldValue.serverTimestamp() : null,
+        videoAddedByUid: videoPayload.videoUrl ? String(state.user.uid || "").trim() : "",
+        videoAddedByName: videoPayload.videoUrl ? actorName : ""
       });
 
       state.lazyDebateDraft = makeDefaultLazyDebateDraft();
