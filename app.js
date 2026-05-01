@@ -6967,6 +6967,100 @@
     `;
   }
 
+  function canEditDebateWinner(debate) {
+    return Boolean(debate && (debate.status === "resolved" || isDebateAwaitingReview(debate)));
+  }
+
+  function getDebateEditableResult(debate) {
+    const safeResult = String(debate?.result || "").trim().toLowerCase();
+    return safeResult === "b" || safeResult === "draw" ? safeResult : "a";
+  }
+
+  function renderDebateWinnerEditField(debate, options = {}) {
+    if (!canEditDebateWinner(debate)) return "";
+
+    const mobile = Boolean(options.mobile);
+    const safeDebateId = String(debate.id || "").trim();
+    const activeResult = getDebateEditableResult(debate);
+    const isBusy = safeDebateId && state.actionBusyKey.startsWith(`${safeDebateId}:`);
+    const copy = isDebateAwaitingReview(debate)
+      ? "Submitted result"
+      : "Recorded result";
+
+    function renderWinnerButton(value, label, toneClass, activeCopy) {
+      const isActive = activeResult === value;
+      return `
+        <button
+          class="result-btn ${toneClass}${isActive ? " is-active" : ""}"
+          type="button"
+          aria-pressed="${isActive ? "true" : "false"}"
+          data-action="set-debate-edit-result"
+          data-value="${escapeHtml(value)}"
+          data-active-copy="${escapeHtml(activeCopy)}"
+          data-inactive-copy="Not selected"
+          ${isBusy ? "disabled" : ""}
+        >
+          <span class="winner-btn-copy">
+            <span class="winner-btn-title">${escapeHtml(label)}</span>
+            <span class="winner-btn-note">${escapeHtml(isActive ? activeCopy : "Not selected")}</span>
+          </span>
+          <span class="winner-btn-indicator" aria-hidden="true">${isActive ? "Selected" : ""}</span>
+        </button>
+      `;
+    }
+
+    return `
+      <div class="debate-winner-edit${mobile ? " is-mobile" : ""}" data-debate-winner-edit>
+        <input
+          type="hidden"
+          name="result"
+          value="${escapeHtml(activeResult)}"
+          data-debate-result-input
+        />
+        <div class="debate-winner-edit-head">
+          <span class="summary-label">Winner</span>
+          <span>${escapeHtml(copy)}</span>
+        </div>
+        <div class="winner-picker debate-winner-picker" role="group" aria-label="Winner">
+          ${renderWinnerButton("a", getDebateTeamLabel(debate, "a", "Team A"), "win", "Winner selected")}
+          ${renderWinnerButton("b", getDebateTeamLabel(debate, "b", "Team B"), "win", "Winner selected")}
+          ${renderWinnerButton("draw", "Draw", "draw", "Draw selected")}
+        </div>
+      </div>
+    `;
+  }
+
+  function syncDebateEditResultUi(root, result) {
+    if (!(root instanceof Element)) return false;
+    const safeResult = result === "b" || result === "draw" ? result : "a";
+    const input = root.querySelector("[data-debate-result-input]");
+
+    if (input instanceof HTMLInputElement) {
+      input.value = safeResult;
+    }
+
+    root.querySelectorAll('[data-action="set-debate-edit-result"]').forEach((node) => {
+      if (!(node instanceof HTMLButtonElement)) return;
+      const isActive = String(node.getAttribute("data-value") || "").trim() === safeResult;
+      node.classList.toggle("is-active", isActive);
+      node.setAttribute("aria-pressed", isActive ? "true" : "false");
+
+      const note = node.querySelector(".winner-btn-note");
+      if (note) {
+        note.textContent = isActive
+          ? String(node.getAttribute("data-active-copy") || "Selected")
+          : String(node.getAttribute("data-inactive-copy") || "Not selected");
+      }
+
+      const indicator = node.querySelector(".winner-btn-indicator");
+      if (indicator) {
+        indicator.textContent = isActive ? "Selected" : "";
+      }
+    });
+
+    return true;
+  }
+
   function syncLazyResultUi() {
     const form = getDraftFormElement("lazy");
     if (!form) return false;
@@ -7162,6 +7256,7 @@
     return `
       <form class="stack-form debate-details-edit-form${mobile ? " is-mobile" : ""}" id="debate-details-form" ${hideActions ? 'data-save-mode="all"' : ""}>
         <input type="hidden" name="debateId" value="${escapeHtml(safeDebateId)}" />
+        ${renderDebateWinnerEditField(debate, { mobile })}
         <label class="field">
           <span>Debate name</span>
           <input
@@ -7285,7 +7380,7 @@
         ${renderDebateDetailsEditForm(debate, { mobile, hideActions: true })}
         ${renderDebateDateEditForm(debate, { mobile, hideActions: true })}
         ${renderDebateSaveAllButton(debate, { mobile })}
-        <div class="${actionsClassName} admin-review-actions">
+        <div class="${actionsClassName} admin-review-actions debate-review-actions">
           <button
             class="result-btn win"
             type="button"
@@ -7305,15 +7400,6 @@
             ${isBusy ? "disabled" : ""}
           >
             Decline
-          </button>
-          <button
-            class="result-btn edit"
-            type="button"
-            data-action="edit-debate"
-            data-debate-id="${escapeHtml(debate.id)}"
-            ${isBusy ? "disabled" : ""}
-          >
-            Edit
           </button>
         </div>
       `;
@@ -7362,36 +7448,6 @@
         ${renderDebateDateEditForm(debate, { mobile, hideActions: true })}
         ${renderDebateSaveAllButton(debate, { mobile })}
         <div class="${actionsClassName}">
-          <button
-            class="result-btn win"
-            type="button"
-            data-action="claim-result"
-            data-debate-id="${escapeHtml(debate.id)}"
-            data-outcome="a"
-            ${isBusy ? "disabled" : ""}
-          >
-            ${escapeHtml(getDebateTeamLabel(debate, "a", "Team A"))}
-          </button>
-          <button
-            class="result-btn win"
-            type="button"
-            data-action="claim-result"
-            data-debate-id="${escapeHtml(debate.id)}"
-            data-outcome="b"
-            ${isBusy ? "disabled" : ""}
-          >
-            ${escapeHtml(getDebateTeamLabel(debate, "b", "Team B"))}
-          </button>
-          <button
-            class="result-btn draw"
-            type="button"
-            data-action="claim-result"
-            data-debate-id="${escapeHtml(debate.id)}"
-            data-outcome="draw"
-            ${isBusy ? "disabled" : ""}
-          >
-            Draw
-          </button>
           <button
             class="result-btn reopen"
             type="button"
@@ -9634,11 +9690,30 @@
       }
     }
 
+    const submittedResult = String(formData.get("result") || "").trim().toLowerCase();
+    const canPatchResult = canEditDebateWinner(debate);
+    if (
+      canPatchResult &&
+      ["a", "b", "draw"].includes(submittedResult) &&
+      String(debate.result || "").trim().toLowerCase() !== submittedResult
+    ) {
+      patch.result = submittedResult;
+
+      if (debate.status === "resolved") {
+        patch.claimedByUid = String(state.user?.uid || "").trim();
+        patch.claimedByName = state.username || "admin";
+        patch.claimedAt = new Date();
+      }
+    }
+
     const nextDebate = { ...debate, ...patch };
-    if (nextDebate.status === "resolved" && (nextDebate.result === "a" || nextDebate.result === "b")) {
+    const nextResult = String(nextDebate.result || "").trim().toLowerCase();
+    const shouldMaintainWinnerMeta = canEditDebateWinner(nextDebate);
+
+    if (shouldMaintainWinnerMeta && (nextResult === "a" || nextResult === "b")) {
       const { winnerUid, winnerName } = buildResolvedWinnerMeta(
         getDebateTeamSize(nextDebate, 1),
-        nextDebate.result,
+        nextResult,
         getDebateTeamParticipants(nextDebate, "a"),
         getDebateTeamParticipants(nextDebate, "b")
       );
@@ -9647,6 +9722,13 @@
       }
       if (normalizeUsername(nextDebate.winnerName || "") !== normalizeUsername(winnerName || "")) {
         patch.winnerName = winnerName;
+      }
+    } else if (shouldMaintainWinnerMeta && nextResult === "draw") {
+      if (String(nextDebate.winnerUid || "").trim()) {
+        patch.winnerUid = "";
+      }
+      if (String(nextDebate.winnerName || "").trim()) {
+        patch.winnerName = "";
       }
     }
 
@@ -9690,6 +9772,9 @@
     const payload = { ...patch };
     if (payload.scheduledFor instanceof Date) {
       payload.scheduledFor = firebase.firestore.Timestamp.fromDate(payload.scheduledFor);
+    }
+    if (payload.claimedAt instanceof Date) {
+      payload.claimedAt = firebase.firestore.Timestamp.fromDate(payload.claimedAt);
     }
     return payload;
   }
@@ -10484,6 +10569,14 @@
       if (!syncLazyResultUi()) {
         renderApp({ preserveScroll: true });
       }
+      return;
+    }
+
+    if (action === "set-debate-edit-result") {
+      event.preventDefault();
+      const value = String(actionButton.getAttribute("data-value") || "").trim();
+      if (!["a", "b", "draw"].includes(value)) return;
+      syncDebateEditResultUi(actionButton.closest("[data-debate-winner-edit]"), value);
       return;
     }
 

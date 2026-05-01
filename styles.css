@@ -1010,6 +1010,43 @@ textarea:focus {
   gap: 10px;
 }
 
+.debate-winner-edit {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--surface-divider);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.debate-winner-edit-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.debate-winner-edit-head .summary-label {
+  flex: 0 0 auto;
+}
+
+.debate-winner-edit-head span:last-child {
+  min-width: 0;
+  text-align: right;
+}
+
+.debate-winner-picker .result-btn {
+  text-align: left;
+}
+
+.admin-actions.admin-review-actions.debate-review-actions,
+.mobile-admin-actions.admin-review-actions.debate-review-actions,
+.admin-review-actions.debate-review-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .winner-picker .result-btn {
   width: 100%;
   min-height: 58px;
@@ -3674,6 +3711,15 @@ html[data-theme="light"] body:not(.is-mobile-app) .archive-page .detail-row {
     grid-template-columns: 1fr;
   }
 
+  .debate-winner-edit-head {
+    display: grid;
+    gap: 4px;
+  }
+
+  .debate-winner-edit-head span:last-child {
+    text-align: left;
+  }
+
   .search-suggestion {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -4698,6 +4744,10 @@ html[data-theme="light"] .is-mobile-app .nav-btn.is-active {
 .is-mobile-app .mobile-admin-actions.admin-review-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.is-mobile-app .mobile-admin-actions.admin-review-actions.debate-review-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .is-mobile-app .mobile-ranking-row {
