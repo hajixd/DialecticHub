@@ -6962,6 +6962,113 @@
     `;
   }
 
+  function getDebateParticipantEditValue(debate, field) {
+    const meta = getDraftParticipantMeta(field);
+    if (!meta || !debate) return "";
+
+    return (
+      normalizeUsername(debate[meta.nameField] || "") ||
+      normalizeUsername(getPlaceholderUsername(debate[meta.field])) ||
+      normalizeUsername(getNameForUid(debate[meta.field], "")) ||
+      ""
+    );
+  }
+
+  function renderDebateDetailsEditForm(debate, options = {}) {
+    if (!currentIsAdmin() || !debate) return "";
+
+    const mobile = Boolean(options.mobile);
+    const safeDebateId = String(debate.id || "").trim();
+    const teamSize = getDebateTeamSize(debate, 1);
+    const isBusy = state.actionBusyKey === `${safeDebateId}:details`;
+
+    function renderParticipantField(field) {
+      const meta = getDraftParticipantMeta(field);
+      if (!meta) return "";
+
+      const active = getActiveDraftParticipantFields(teamSize).includes(field);
+      return `
+        <label class="field" data-debate-details-participant="${escapeHtml(field)}" ${active ? "" : "hidden"}>
+          <span>${escapeHtml(meta.label)}</span>
+          <input
+            type="text"
+            name="${escapeHtml(field)}"
+            value="${escapeHtml(getDebateParticipantEditValue(debate, field))}"
+            placeholder="username"
+            ${isBusy ? "disabled" : ""}
+          />
+        </label>
+      `;
+    }
+
+    return `
+      <form class="stack-form debate-details-edit-form${mobile ? " is-mobile" : ""}" id="debate-details-form">
+        <input type="hidden" name="debateId" value="${escapeHtml(safeDebateId)}" />
+        <label class="field">
+          <span>Debate name</span>
+          <input
+            type="text"
+            name="topic"
+            value="${escapeHtml(String(debate.topic || "").trim())}"
+            ${isBusy ? "disabled" : ""}
+          />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Category</span>
+            <select name="category" ${isBusy ? "disabled" : ""}>
+              ${DEBATE_CATEGORIES.map((category) => `
+                <option value="${escapeHtml(category.id)}" ${normalizeDebateCategory(debate.category) === category.id ? "selected" : ""}>
+                  ${escapeHtml(category.label)}
+                </option>
+              `).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Format</span>
+            <select name="teamSize" data-debate-details-team-size ${isBusy ? "disabled" : ""}>
+              ${DEBATE_TEAM_OPTIONS.map((option) => `
+                <option value="${escapeHtml(String(option.id))}" ${teamSize === option.id ? "selected" : ""}>
+                  ${escapeHtml(option.label)}
+                </option>
+              `).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="debate-team-grid${teamSize !== 1 ? " is-expanded" : ""}${teamSize === 2 ? " is-2v2" : ""}${teamSize === 3 ? " is-2v1" : ""}" data-debate-details-participants>
+          <section class="debate-team-card">
+            <span class="summary-label">Team A</span>
+            <div class="debate-team-fields">
+              ${renderParticipantField("debaterAUid")}
+              ${renderParticipantField("debaterA2Uid")}
+            </div>
+          </section>
+          <section class="debate-team-card">
+            <span class="summary-label">Team B</span>
+            <div class="debate-team-fields">
+              ${renderParticipantField("debaterBUid")}
+              ${renderParticipantField("debaterB2Uid")}
+            </div>
+          </section>
+        </div>
+        <label class="field">
+          <span>Moderator</span>
+          <input
+            type="text"
+            name="moderator"
+            value="${escapeHtml(String(debate.moderator || "").trim())}"
+            ${isBusy ? "disabled" : ""}
+          />
+        </label>
+        <div class="form-actions">
+          <button class="secondary-btn" type="submit" ${isBusy ? "disabled" : ""}>
+            ${isBusy ? "Saving..." : "Save Details"}
+          </button>
+        </div>
+      </form>
+    `;
+  }
+
   function renderDebateAdminTools(debate, options = {}) {
     if (!currentIsAdmin() || !state.debateEditMode || !debate) return "";
 
@@ -6988,6 +7095,7 @@
     let content = "";
     if (isAwaitingReview) {
       content = `
+        ${renderDebateDetailsEditForm(debate, { mobile })}
         ${renderDebateDateEditForm(debate, { mobile })}
         <div class="mini-copy">Submitted by ${escapeHtml(formatDisplayName(debate.createdByName || "member", "Member"))}</div>
         <div class="${actionsClassName}">
@@ -7015,6 +7123,7 @@
       `;
     } else if (debate.status === "scheduled") {
       content = `
+        ${renderDebateDetailsEditForm(debate, { mobile })}
         ${renderDebateDateEditForm(debate, { mobile })}
         ${renderResolveVideoField(debate, mobile ? { mobile: true } : {})}
         <div class="${actionsClassName}">
@@ -7052,6 +7161,7 @@
       `;
     } else if (debate.status === "resolved") {
       content = `
+        ${renderDebateDetailsEditForm(debate, { mobile })}
         ${renderDebateDateEditForm(debate, { mobile })}
         <div class="${actionsClassName}">
           <button
@@ -9279,6 +9389,162 @@
     }
   }
 
+  function syncDebateDetailsParticipantFields(form) {
+    if (!(form instanceof HTMLFormElement)) return;
+
+    const teamSizeInput = form.querySelector("[data-debate-details-team-size]");
+    const teamSize = normalizeDebateTeamSize(teamSizeInput?.value, 1);
+    const activeFields = new Set(getActiveDraftParticipantFields(teamSize));
+
+    form.querySelectorAll("[data-debate-details-participant]").forEach((node) => {
+      const field = String(node.getAttribute("data-debate-details-participant") || "").trim();
+      node.hidden = !activeFields.has(field);
+    });
+
+    const grid = form.querySelector("[data-debate-details-participants]");
+    if (grid) {
+      grid.className = `debate-team-grid${teamSize !== 1 ? " is-expanded" : ""}${teamSize === 2 ? " is-2v2" : ""}${teamSize === 3 ? " is-2v1" : ""}`;
+      grid.setAttribute("data-debate-details-participants", "");
+    }
+  }
+
+  async function handleDebateDetailsSubmit(event) {
+    event.preventDefault();
+    if (!state.user || !currentIsAdmin()) return;
+
+    const formData = new FormData(event.target);
+    const debateId = String(formData.get("debateId") || "").trim();
+    const debate = state.debates.find((entry) => entry.id === debateId);
+    if (!debate) {
+      showToast("Could not find that debate.", "error");
+      return;
+    }
+
+    const topic = String(formData.get("topic") || "").trim();
+    const category = normalizeDebateCategory(formData.get("category"), "");
+    const teamSize = normalizeDebateTeamSize(formData.get("teamSize"), 1);
+    const moderator = String(formData.get("moderator") || "").trim();
+    const activeFields = getActiveDraftParticipantFields(teamSize);
+
+    if (!topic) {
+      showToast("Add a debate name before saving.", "error");
+      return;
+    }
+    if (!isValidDebateCategory(category)) {
+      showToast("Choose a valid category.", "error");
+      return;
+    }
+
+    const participantNames = activeFields.map((field) => {
+      const name = normalizeUsername(formData.get(field) || "");
+      return { field, name };
+    });
+    const invalidParticipant = participantNames.find((entry) => !isValidUsername(entry.name));
+    if (invalidParticipant) {
+      showToast("Every active debater needs a 3-20 character username.", "error");
+      return;
+    }
+
+    const uniqueNames = new Set(participantNames.map((entry) => entry.name));
+    if (uniqueNames.size !== participantNames.length) {
+      showToast("Each debater slot needs a different person.", "error");
+      return;
+    }
+
+    state.actionBusyKey = `${debateId}:details`;
+    renderApp({ preserveScroll: true });
+
+    try {
+      const patch = {};
+      const currentTeamSize = getDebateTeamSize(debate, 1);
+
+      if (String(debate.topic || "").trim() !== topic) {
+        patch.topic = topic;
+      }
+      if (normalizeDebateCategory(debate.category) !== category) {
+        patch.category = category;
+      }
+      if (currentTeamSize !== teamSize) {
+        patch.teamSize = teamSize;
+      }
+      if (String(debate.moderator || "").trim() !== moderator) {
+        patch.moderator = moderator;
+      }
+
+      for (const entry of participantNames) {
+        const meta = getDraftParticipantMeta(entry.field);
+        if (!meta) continue;
+
+        const currentUid = String(debate[meta.field] || "").trim();
+        const currentName = getDebateParticipantEditValue(debate, meta.field);
+        const shouldResolveIdentity = currentTeamSize !== teamSize || currentName !== entry.name || !currentUid;
+        if (!shouldResolveIdentity) continue;
+
+        const identity = await ensureReservedUsername(entry.name);
+        const nextUid = String(identity?.uid || "").trim();
+        const nextName = normalizeUsername(identity?.username || entry.name);
+        if (!nextUid || !nextName) {
+          throw new Error("INVALID_DEBATER");
+        }
+
+        if (currentUid !== nextUid) {
+          patch[meta.field] = nextUid;
+        }
+        if (normalizeUsername(debate[meta.nameField] || "") !== nextName) {
+          patch[meta.nameField] = nextName;
+        }
+      }
+
+      const nextDebate = { ...debate, ...patch };
+      if (nextDebate.status === "resolved" && (nextDebate.result === "a" || nextDebate.result === "b")) {
+        const { winnerUid, winnerName } = buildResolvedWinnerMeta(
+          getDebateTeamSize(nextDebate, 1),
+          nextDebate.result,
+          getDebateTeamParticipants(nextDebate, "a"),
+          getDebateTeamParticipants(nextDebate, "b")
+        );
+        if (String(nextDebate.winnerUid || "").trim() !== winnerUid) {
+          patch.winnerUid = winnerUid;
+        }
+        if (normalizeUsername(nextDebate.winnerName || "") !== normalizeUsername(winnerName || "")) {
+          patch.winnerName = winnerName;
+        }
+      }
+
+      if (!Object.keys(patch).length) {
+        showToast("No debate details changed.", "success");
+        return;
+      }
+
+      if (isPreviewMode()) {
+        state.debates = state.debates.map((entry) => {
+          if (entry.id !== debateId) return entry;
+          return {
+            ...entry,
+            ...patch,
+            updatedAt: new Date()
+          };
+        });
+      } else {
+        await db.collection("debates").doc(debateId).update({
+          ...patch,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      showToast("Debate details updated.", "success");
+    } catch (error) {
+      console.warn("Could not update debate details", error);
+      const message = isFirestorePermissionDenied(error)
+        ? getAdminRulesDeployMessage("editing debates")
+        : "Could not update those debate details right now.";
+      showToast(message, "error");
+    } finally {
+      state.actionBusyKey = "";
+      renderApp({ preserveScroll: true });
+    }
+  }
+
   function getResolveVideoInputValue(debateId) {
     const safeDebateId = String(debateId || "").trim();
     if (!safeDebateId) return "";
@@ -9841,6 +10107,16 @@
 
   function handleMainInput(event) {
     const videoLinkFields = event.target?.closest?.(".video-link-fields") || null;
+    const debateDetailsForm = event.target?.closest?.("#debate-details-form") || null;
+
+    if (
+      debateDetailsForm instanceof HTMLFormElement &&
+      event.target instanceof HTMLSelectElement &&
+      event.target.hasAttribute("data-debate-details-team-size")
+    ) {
+      syncDebateDetailsParticipantFields(debateDetailsForm);
+      return;
+    }
 
     if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-admin-user-search")) {
       state.adminUserSearchDraft = String(event.target.value || "");
@@ -10122,6 +10398,8 @@
         handleScheduleSubmit(event);
       } else if (event.target && event.target.id === "lazy-debate-form") {
         handleLazyDebateSubmit(event);
+      } else if (event.target && event.target.id === "debate-details-form") {
+        handleDebateDetailsSubmit(event);
       } else if (event.target && event.target.id === "debate-date-form") {
         handleDebateDateSubmit(event);
       } else if (event.target && event.target.id === "debate-comment-form") {
