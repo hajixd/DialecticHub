@@ -302,6 +302,17 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    match /dialecticHubLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.app == 'dialectichub'
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actionKey is string
+        && request.resource.data.actionLabel is string;
+      allow update, delete: if isAdmin();
+    }
+
     match /adminBackups/{backupId} {
       allow read, write: if isAdmin();
       match /{sub=**} {

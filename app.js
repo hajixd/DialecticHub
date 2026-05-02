@@ -35,6 +35,8 @@
   const VIDEO_CLIP_SLIDER_STEP_SECONDS = 15;
   const VIDEO_CLIP_DEFAULT_END_SECONDS = 10 * 60;
   const PLACEHOLDER_UID_PREFIX = "invite:";
+  const DIALECTICHUB_LOG_COLLECTION = "dialecticHubLogs";
+  const DIALECTICHUB_LOG_APP_ID = "dialectichub";
   const VALID_PAGES = new Set(["dashboard", "search", "schedule", "archive", "rankings", "settings", "admin", "debate"]);
   const ELO_BASELINE = 1100;
   const MIN_RANKED_DEBATES = 3;
@@ -1597,40 +1599,58 @@
   }
 
   function getActivityActorMeta(options = {}) {
-    const actorId = String(options.actorId || state.user?.uid || auth.currentUser?.uid || "").trim();
-    const actorName =
+    const actorUid = String(options.actorUid || options.actorId || state.user?.uid || auth.currentUser?.uid || "").trim();
+    const actorUsername =
       normalizeUsername(
-        options.actorName ||
+        options.actorUsername ||
+          options.actorName ||
           state.username ||
           state.selfProfile?.username ||
           state.selfProfile?.name ||
           auth.currentUser?.displayName ||
-          getNameForUid(actorId, "member")
+          getNameForUid(actorUid, "member")
       ) || "member";
     return {
-      actorId,
-      actorName,
+      actorUid,
+      actorUsername,
       actorRole: currentIsAdmin() ? "admin" : "user"
     };
+  }
+
+  function getDialecticHubLogCategory(action, subjectType) {
+    const safeSubject = String(subjectType || "").trim().toLowerCase();
+    const safeAction = String(action || "").trim().toLowerCase();
+    if (safeSubject === "debate" || safeAction.startsWith("debate_") || safeAction === "comment_added") {
+      return "debate";
+    }
+    if (safeSubject === "user" || safeAction.includes("user") || safeAction.includes("account") || safeAction.includes("profile") || safeAction.includes("password")) {
+      return "user";
+    }
+    return "site";
   }
 
   async function recordActivityLog(action, options = {}) {
     const safeAction = normalizeActivityAction(action);
     const actorMeta = getActivityActorMeta(options);
-    if (!safeAction || !actorMeta.actorId) return false;
+    if (!safeAction || !actorMeta.actorUid) return false;
 
     const createdAtMs = Date.now();
+    const subjectType = String(options.subjectType || options.targetType || "").trim();
+    const subjectId = String(options.subjectId || options.targetId || "").trim();
+    const subjectLabel = String(options.subjectLabel || options.targetLabel || "").trim();
     const entry = {
-      action: safeAction,
-      actionType: safeAction,
+      app: DIALECTICHUB_LOG_APP_ID,
+      schemaVersion: 1,
+      actionKey: safeAction,
       actionLabel: getActivityActionLabel(safeAction),
+      category: getDialecticHubLogCategory(safeAction, subjectType),
       ...actorMeta,
-      targetType: String(options.targetType || "").trim(),
-      targetId: String(options.targetId || "").trim(),
-      targetLabel: String(options.targetLabel || "").trim(),
+      subjectType,
+      subjectId,
+      subjectLabel,
       summary: String(options.summary || "").trim(),
-      details: cleanActivityLogDetails(options.details),
-      createdAtMs
+      context: cleanActivityLogDetails(options.context || options.details),
+      occurredAtMs: createdAtMs
     };
 
     if (isPreviewMode()) {
@@ -1646,7 +1666,7 @@
     }
 
     try {
-      const docRef = await db.collection("logs").add({
+      const docRef = await db.collection(DIALECTICHUB_LOG_COLLECTION).add({
         ...entry,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
@@ -1671,7 +1691,7 @@
   }
 
   function getActivityLogMillis(log) {
-    return toMillis(log?.createdAt) || Number(log?.createdAtMs || 0) || 0;
+    return toMillis(log?.createdAt) || Number(log?.occurredAtMs || log?.createdAtMs || 0) || 0;
   }
 
   function compareActivityLogsDescending(left, right) {
@@ -3247,7 +3267,7 @@
     if (!state.user || !currentIsAdmin() || isPreviewMode()) return;
 
     state.unsubLogs = db
-      .collection("logs")
+      .collection(DIALECTICHUB_LOG_COLLECTION)
       .orderBy("createdAt", "desc")
       .limit(150)
       .onSnapshot(
@@ -6009,6 +6029,7 @@
     }
 
     const candidates = [
+      log.actionKey,
       log.action,
       log.actionType,
       log.eventType,
@@ -6028,6 +6049,10 @@
       log.summary,
       log.message,
       log.description,
+      log.context?.action,
+      log.context?.outcome,
+      log.context?.status,
+      log.context?.result,
       log.details?.action,
       log.details?.outcome,
       log.details?.status,
@@ -6108,7 +6133,12 @@
   }
 
   function getActivityDetailItems(log) {
-    const details = log?.details && typeof log.details === "object" ? log.details : {};
+    const details =
+      log?.context && typeof log.context === "object"
+        ? log.context
+        : log?.details && typeof log.details === "object"
+          ? log.details
+          : {};
     return Object.entries(details)
       .map(([key, value]) => {
         const rendered = formatActivityDetailValue(value);
@@ -6129,13 +6159,13 @@
         ${list
           .map((log) => {
             const actionLabel = getActivityActionLabel(log);
-            const actorName = formatDisplayName(log.actorName || getNameForUid(log.actorId, "member"), "Member");
-            const actorId = String(log.actorId || "").trim();
-            const whenValue = log.createdAt || log.createdAtMs || "";
+            const actorUid = String(log.actorUid || log.actorId || "").trim();
+            const actorName = formatDisplayName(log.actorUsername || log.actorName || getNameForUid(actorUid, "member"), "Member");
+            const whenValue = log.createdAt || log.occurredAtMs || log.createdAtMs || "";
             const whenLabel = getActivityLogMillis(log) ? formatDateTime(whenValue) : "Pending";
             const stampLabel = formatRelativeStamp(whenValue) || whenLabel;
-            const targetType = formatDisplayName(log.targetType || "", "");
-            const targetLabel = String(log.targetLabel || "").trim();
+            const targetType = formatDisplayName(log.subjectType || log.targetType || "", "");
+            const targetLabel = String(log.subjectLabel || log.targetLabel || "").trim();
             const summary =
               String(log.summary || log.message || log.description || "").trim() ||
               (targetLabel ? `${actionLabel}: ${targetLabel}` : actionLabel);
@@ -6150,7 +6180,7 @@
                 <div class="admin-log-meta">
                   <span>Who: ${escapeHtml(actorName)}</span>
                   <span>When: ${escapeHtml(whenLabel)}</span>
-                  ${actorId ? `<span>UID: ${escapeHtml(actorId)}</span>` : ""}
+                  ${actorUid ? `<span>UID: ${escapeHtml(actorUid)}</span>` : ""}
                   ${targetLabel ? `<span>${escapeHtml(targetType || "Target")}: ${escapeHtml(targetLabel)}</span>` : ""}
                 </div>
                 ${
