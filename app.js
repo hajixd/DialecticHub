@@ -1615,13 +1615,15 @@
   }
 
   async function recordActivityLog(action, options = {}) {
-    const safeAction = String(action || "").trim();
+    const safeAction = normalizeActivityAction(action);
     const actorMeta = getActivityActorMeta(options);
-    if (!safeAction || !actorMeta.actorId) return;
+    if (!safeAction || !actorMeta.actorId) return false;
 
     const createdAtMs = Date.now();
     const entry = {
       action: safeAction,
+      actionType: safeAction,
+      actionLabel: getActivityActionLabel(safeAction),
       ...actorMeta,
       targetType: String(options.targetType || "").trim(),
       targetId: String(options.targetId || "").trim(),
@@ -1640,16 +1642,31 @@
         },
         ...state.logs
       ].slice(0, 150);
-      return;
+      return true;
     }
 
     try {
-      await db.collection("logs").add({
+      const docRef = await db.collection("logs").add({
         ...entry,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
+      state.logs = [
+        {
+          id: docRef.id,
+          ...entry,
+          createdAt: new Date(createdAtMs)
+        },
+        ...state.logs.filter((log) => String(log.id || "").trim() !== docRef.id)
+      ]
+        .sort(compareActivityLogsDescending)
+        .slice(0, 150);
+      if (state.user && !state.reviewRenderDeferred) {
+        renderApp({ preserveScroll: true });
+      }
+      return true;
     } catch (error) {
       console.warn("Could not write activity log", error);
+      return false;
     }
   }
 
@@ -5959,8 +5976,78 @@
     `;
   }
 
-  function getActivityActionLabel(action) {
-    const safeAction = String(action || "").trim();
+  function normalizeActivityAction(action) {
+    const raw = String(action || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    const aliases = {
+      accept: "debate_accepted",
+      accepted: "debate_accepted",
+      approve: "debate_accepted",
+      approved: "debate_accepted",
+      debate_approved: "debate_accepted",
+      decline: "debate_declined",
+      declined: "debate_declined",
+      reject: "debate_declined",
+      rejected: "debate_declined",
+      debate_rejected: "debate_declined",
+      resolve: "debate_resolved",
+      resolved: "debate_resolved",
+      result_claimed: "debate_resolved",
+      reopen: "debate_reopened",
+      reopened: "debate_reopened",
+      submit: "debate_submitted",
+      submitted: "debate_submitted",
+      create: "debate_logged",
+      created: "debate_logged",
+      logged: "debate_logged"
+    };
+    return aliases[raw] || raw;
+  }
+
+  function getActivityActionFromLog(log) {
+    if (!log || typeof log !== "object") {
+      return normalizeActivityAction(log);
+    }
+
+    const candidates = [
+      log.action,
+      log.actionType,
+      log.eventType,
+      log.event,
+      log.type,
+      log.kind,
+      log.verb,
+      log.activity
+    ];
+    for (const candidate of candidates) {
+      const normalized = normalizeActivityAction(candidate);
+      if (normalized) return normalized;
+    }
+
+    const searchable = [
+      log.actionLabel,
+      log.summary,
+      log.message,
+      log.description,
+      log.details?.action,
+      log.details?.outcome,
+      log.details?.status,
+      log.details?.result
+    ]
+      .map((entry) => String(entry || "").toLowerCase())
+      .join(" ");
+
+    if (/\b(accept|accepted|approve|approved)\b/.test(searchable)) return "debate_accepted";
+    if (/\b(decline|declined|reject|rejected)\b/.test(searchable)) return "debate_declined";
+    if (/\b(reopen|reopened)\b/.test(searchable)) return "debate_reopened";
+    if (/\b(resolve|resolved|claimed)\b/.test(searchable)) return "debate_resolved";
+    if (/\b(submit|submitted)\b/.test(searchable)) return "debate_submitted";
+    if (/\b(comment|commented)\b/.test(searchable)) return "comment_added";
+    if (/\b(video)\b/.test(searchable)) return "debate_video_updated";
+    return "";
+  }
+
+  function getActivityActionLabel(actionOrLog) {
+    const safeAction = getActivityActionFromLog(actionOrLog);
     const labels = {
       account_created: "Account Created",
       profile_avatar_updated: "Profile Picture Updated",
@@ -5982,7 +6069,13 @@
       comment_added: "Comment Added"
     };
     if (labels[safeAction]) return labels[safeAction];
-    return formatDisplayName(safeAction.replace(/[_-]+/g, " "), "Action");
+    if (safeAction) {
+      return formatDisplayName(safeAction.replace(/[_-]+/g, " "), "Logged Activity");
+    }
+    if (actionOrLog && typeof actionOrLog === "object" && String(actionOrLog.actionLabel || "").trim()) {
+      return formatDisplayName(actionOrLog.actionLabel, "Logged Activity");
+    }
+    return "Logged Activity";
   }
 
   function formatActivityDetailKey(key) {
@@ -6035,7 +6128,7 @@
       <div class="admin-log-list">
         ${list
           .map((log) => {
-            const actionLabel = getActivityActionLabel(log.action);
+            const actionLabel = getActivityActionLabel(log);
             const actorName = formatDisplayName(log.actorName || getNameForUid(log.actorId, "member"), "Member");
             const actorId = String(log.actorId || "").trim();
             const whenValue = log.createdAt || log.createdAtMs || "";
@@ -6044,7 +6137,7 @@
             const targetType = formatDisplayName(log.targetType || "", "");
             const targetLabel = String(log.targetLabel || "").trim();
             const summary =
-              String(log.summary || "").trim() ||
+              String(log.summary || log.message || log.description || "").trim() ||
               (targetLabel ? `${actionLabel}: ${targetLabel}` : actionLabel);
             const detailItems = getActivityDetailItems(log);
             return `
@@ -10702,7 +10795,7 @@
         }
         await animationPromise;
         showToast("Debate submission declined.", "success");
-        recordActivityLog("debate_declined", {
+        await recordActivityLog("debate_declined", {
           ...getDebateActivityTarget(debate, debateId),
           summary: `Debate submission declined: ${debate.topic || "Untitled debate"}.`,
           details: {
@@ -10748,7 +10841,7 @@
 
       await animationPromise;
       showToast("Debate approved.", "success");
-      recordActivityLog("debate_accepted", {
+      await recordActivityLog("debate_accepted", {
         ...getDebateActivityTarget(debate, debateId),
         summary: `Debate submission accepted: ${debate.topic || "Untitled debate"}.`,
         details: {
@@ -10843,7 +10936,7 @@
 
       await db.collection("debates").doc(debateId).update(payload);
       showToast(outcome === "reopen" ? "Debate reopened." : "Result claimed.", "success");
-      recordActivityLog(outcome === "reopen" ? "debate_reopened" : "debate_resolved", {
+      await recordActivityLog(outcome === "reopen" ? "debate_reopened" : "debate_resolved", {
         ...getDebateActivityTarget(debate, debateId),
         summary:
           outcome === "reopen"
